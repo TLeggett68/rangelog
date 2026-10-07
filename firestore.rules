@@ -1,0 +1,56 @@
+rules_version = '2';
+
+// Paste this into Firebase console → Firestore Database → Rules, then click Publish.
+//
+// Anyone with the site link can read and add data (there are no logins).
+// These rules just keep the data in the right shape and stop junk/oversized writes.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /drills/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.par is number
+        && request.resource.data.par > 0
+        && request.resource.data.marks is list
+        && request.resource.data.marks.size() <= 100;
+      allow delete: if true;
+    }
+
+    match /stages/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.objects is list
+        && request.resource.data.objects.size() <= 200;
+      allow delete: if true;
+    }
+
+    match /members/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 60;
+      allow delete: if true;
+    }
+
+    // Shared settings live in a single document: settings/config
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if id == 'config'
+        && request.resource.data.penalties is map;
+    }
+
+    // One document per range day, e.g. days/2026-10-06, holding that day's runs.
+    match /days/{day} {
+      allow read: if true;
+      allow create, update: if day.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && request.resource.data.runs is list
+        && request.resource.data.runs.size() <= 3000;
+      allow delete: if false;
+    }
+  }
+}

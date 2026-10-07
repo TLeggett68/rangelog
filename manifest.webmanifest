@@ -1,0 +1,16 @@
+{
+  "name": "NHCSG Range Log",
+  "short_name": "Range Log",
+  "description": "Drills, stages and par times for our shooting group.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eaf2eb",
+  "theme_color": "#14301f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
