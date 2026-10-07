@@ -9,7 +9,7 @@
  * See README.md for step-by-step instructions.
  */
 window.GROUP_NAME = 'NHCSG Range Log';
-window.GROUP_TAGLINE = 'Church Shooting Group';
+window.GROUP_TAGLINE = 'Shooting Group';
 
 // Public project identifiers (not secrets). Access is controlled by firestore.rules.
 window.FIREBASE_CONFIG = {
