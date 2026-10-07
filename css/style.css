@@ -300,6 +300,17 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .swatches { display: flex; gap: 8px; }
 .swatch { width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, .25); cursor: pointer; padding: 0; }
 .swatch.on { box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--g600); }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg-btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; min-height: 40px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--g50);
+  font: inherit; font-weight: 600; font-size: .88rem; color: var(--g800); cursor: pointer;
+}
+.seg-btn.on { border-color: var(--g600); background: #fff; box-shadow: 0 0 0 2px var(--g600); }
+.box-swatch { display: inline-block; width: 16px; height: 16px; border: 2.5px solid; border-radius: 3px; flex: none; outline: 1px solid rgba(0, 0, 0, .25); background-color: #c9ad84; }
+.map-key { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 4px 0; font-size: .82rem; font-weight: 600; color: var(--muted); }
+.map-key > span { display: inline-flex; align-items: center; gap: 6px; }
+.tag-box.moving { background: #d93636; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 label.check input { width: auto; margin: 0; accent-color: var(--g600); }
 .stage-editor { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }

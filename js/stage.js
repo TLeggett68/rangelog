@@ -3,7 +3,8 @@
  * deep (20 units per yard). Downrange is the top of the drawing.
  *
  * Object: { id, type, x, y, rot, label, note, shots?, len? (wall), w?, h? (box),
- *           points?, color?, dashed? (arrow — points are relative to x, y) }
+ *           points?, color?, dashed? (arrow — points are relative to x, y),
+ *           boxType? (box — 'stationary' (default, white) or 'moving' (red)) }
  */
 (function () {
   'use strict';
@@ -20,6 +21,13 @@
     arrow:   { name: 'Route arrow',  note: true, z: 2.5, drawn: true }, // drawn freehand, not added from the toolbar
   };
   const ARROW_COLORS = ['#ffd43b', '#ff6b6b', '#4dabf7', '#ffffff'];
+
+  // Shooting box types: the color tells shooters whether they shoot standing still or moving.
+  const BOX_KINDS = {
+    stationary: { name: 'Stationary', short: 'Stationary', stroke: '#ffffff', fill: 'rgba(255,255,255,.22)' },
+    moving: { name: 'Shooting on the move', short: 'On the move', stroke: '#ff4d4d', fill: 'rgba(255,77,77,.28)' },
+  };
+  function boxKind(o) { return BOX_KINDS[o.boxType] ? o.boxType : 'stationary'; }
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -165,7 +173,8 @@
           <circle r="4" fill="none" stroke="#6a93bd" stroke-width="1"/>`;
       case 'box': {
         const w = o.w || 40, h = o.h || 40;
-        return `<rect x="${-w / 2}" y="${-h / 2}" width="${w}" height="${h}" fill="rgba(255,255,255,.22)" stroke="#fff" stroke-width="2.5"/>`;
+        const k = BOX_KINDS[boxKind(o)];
+        return `<rect x="${-w / 2}" y="${-h / 2}" width="${w}" height="${h}" fill="${k.fill}" stroke="${k.stroke}" stroke-width="2.5"/>`;
       }
       case 'wall': {
         const len = o.len || 60;
@@ -198,7 +207,7 @@
     if (!o.label) return '';
     const text = esc(o.label);
     if (o.type === 'box') {
-      return `<text x="${o.x}" y="${o.y + 6}" text-anchor="middle" font-family="Oswald, sans-serif" font-size="17" font-weight="700" fill="#fff" stroke="rgba(0,0,0,.35)" stroke-width="3" paint-order="stroke">${text}</text>`;
+      return `<text x="${o.x}" y="${o.y + 6}" pointer-events="none" text-anchor="middle" font-family="Oswald, sans-serif" font-size="17" font-weight="700" fill="#fff" stroke="rgba(0,0,0,.35)" stroke-width="3" paint-order="stroke">${text}</text>`;
     }
     const colors = { target: ['#1b4029', '#fff'], steel: ['#455a64', '#fff'], noshoot: ['#fff', '#b3261e'] }[o.type] || ['#333', '#fff'];
     const w = 10 + o.label.length * 7;
@@ -252,5 +261,5 @@
       .reduce((sum, o) => sum + (parseInt(o.shots, 10) || 0), 0);
   }
 
-  window.Stage = { W, H, PPY, TYPES, ARROW_COLORS, create, createArrow, draft, render, background, svg, icon, rounds };
+  window.Stage = { W, H, PPY, TYPES, ARROW_COLORS, BOX_KINDS, boxKind, create, createArrow, draft, render, background, svg, icon, rounds };
 })();

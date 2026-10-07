@@ -643,6 +643,12 @@
     const naturally = (a, b) => String(a.label).localeCompare(String(b.label), undefined, { numeric: true });
     const shootable = objs.filter(o => o.type === 'target' || o.type === 'steel').sort(naturally);
     const boxes = objs.filter(o => o.type === 'box').sort(naturally);
+    const hasMoving = boxes.some(b => Stage.boxKind(b) === 'moving');
+    const boxTag = b => `<span class="tag tag-box${Stage.boxKind(b) === 'moving' ? ' moving' : ''}">Box ${esc(b.label)}</span>`;
+    const boxKey = hasMoving ? `<div class="map-key">${Object.keys(Stage.BOX_KINDS).map(k => {
+      const kind = Stage.BOX_KINDS[k];
+      return `<span><span class="box-swatch" style="border-color:${kind.stroke};background:linear-gradient(${kind.fill},${kind.fill}),#c9ad84"></span>${kind.name}</span>`;
+    }).join('')}</div>` : '';
     const noShoots = objs.filter(o => o.type === 'noshoot').length;
     let hi = null;
 
@@ -654,7 +660,7 @@
       </div>
       <div class="stage-layout">
         <div class="stack">
-          <div class="card bay-card" id="stage-map">${Stage.svg(objs, { className: 'clickable' })}</div>
+          <div class="card bay-card" id="stage-map">${Stage.svg(objs, { className: 'clickable' })}${boxKey}</div>
           <div class="callout" id="obj-note"><span class="muted">Tap a target or route arrow on the map to see its instructions.</span></div>
         </div>
         <div class="stack">
@@ -668,8 +674,8 @@
             <table class="table target-table" id="target-table"><thead><tr><th>Target</th><th class="num">Shots</th><th>Where to shoot</th></tr></thead><tbody>
             ${shootable.map(o => `<tr data-id="${esc(o.id)}"><td><span class="tag tag-${o.type}">${esc(o.label || Stage.TYPES[o.type].name)}</span></td><td class="num strong">${o.shots || 0}</td><td>${esc(o.note) || '<span class="muted">—</span>'}</td></tr>`).join('')}
             </tbody></table></div>` : ''}
-          ${boxes.some(b => b.note) ? `<div class="card"><h3>Shooting positions</h3><ul class="plain">
-            ${boxes.filter(b => b.note).map(b => `<li><span class="tag tag-box">Box ${esc(b.label)}</span> ${esc(b.note)}</li>`).join('')}</ul></div>` : ''}
+          ${boxes.some(b => b.note) || hasMoving ? `<div class="card"><h3>Shooting positions</h3><ul class="plain">
+            ${boxes.filter(b => b.note || Stage.boxKind(b) === 'moving').map(b => `<li>${boxTag(b)} ${Stage.boxKind(b) === 'moving' ? '<strong>Shooting on the move.</strong> ' : ''}${esc(b.note)}</li>`).join('')}</ul></div>` : ''}
           ${recordFormHTML('stage')}
         </div>
       </div>
@@ -685,6 +691,7 @@
       note.innerHTML = `<strong>${esc(o.type === 'box' ? 'Box ' + o.label : (o.label || t.name))}</strong>
         ${o.shots ? `<span class="pill">${o.shots} shot${o.shots == 1 ? '' : 's'}</span>` : ''}
         ${o.type === 'noshoot' ? '<span class="pill danger">Do not shoot</span>' : ''}
+        ${o.type === 'box' ? `<span class="pill${Stage.boxKind(o) === 'moving' ? ' danger' : ''}">${Stage.BOX_KINDS[Stage.boxKind(o)].name}</span>` : ''}
         <span>${esc(o.note) || (o.type === 'barrel' || o.type === 'wall' ? t.name : '')}</span>`;
     }
     $('#stage-map').addEventListener('click', e => {
@@ -793,8 +800,15 @@
         ${t.note ? `<label>${o.type === 'box' || o.type === 'arrow' ? 'Notes' : 'Where to shoot'} <textarea data-prop="note" rows="3" placeholder="${{ box: 'e.g. Start here, hands on head', arrow: 'e.g. Reload while moving to Box B' }[o.type] || 'e.g. 2 to the body, 1 to the head'}">${esc(o.note)}</textarea></label>` : ''}
         ${o.type === 'wall' ? `<label>Length <span class="range-row"><input data-prop="len" type="range" min="20" max="300" step="10" value="${o.len}"><span class="val">${yd(o.len)}</span></span></label>` : ''}
         ${o.type === 'box' ? `
-          <label>Width <span class="range-row"><input data-prop="w" type="range" min="20" max="160" step="5" value="${o.w}"><span class="val">${yd(o.w)}</span></span></label>
-          <label>Depth <span class="range-row"><input data-prop="h" type="range" min="20" max="160" step="5" value="${o.h}"><span class="val">${yd(o.h)}</span></span></label>` : ''}
+          <div class="field"><span class="field-label">Box type</span>
+            <span class="seg">${Object.keys(Stage.BOX_KINDS).map(k => {
+              const kind = Stage.BOX_KINDS[k];
+              return `<button type="button" class="seg-btn${Stage.boxKind(o) === k ? ' on' : ''}" data-box-kind="${k}" aria-pressed="${Stage.boxKind(o) === k}">
+                <span class="box-swatch" style="border-color:${kind.stroke};background:linear-gradient(${kind.fill},${kind.fill}),#c9ad84"></span>${kind.short}</button>`;
+            }).join('')}</span>
+          </div>
+          <label>Width <span class="range-row"><input data-prop="w" type="range" min="20" max="300" step="5" value="${o.w}"><span class="val">${yd(o.w)}</span></span></label>
+          <label>Depth <span class="range-row"><input data-prop="h" type="range" min="20" max="300" step="5" value="${o.h}"><span class="val">${yd(o.h)}</span></span></label>` : ''}
         ${o.type !== 'barrel' && o.type !== 'arrow' ? `<label>Rotation
           <span class="range-row"><input data-prop="rot" type="range" min="0" max="359" step="1" value="${o.rot || 0}" aria-label="Rotation"></span>
           <span class="range-row">
@@ -822,6 +836,14 @@
       $$('[data-color]', p).forEach(b => b.addEventListener('click', () => {
         o.color = arrowColor = b.dataset.color;
         $$('[data-color]', p).forEach(x => x.classList.toggle('on', x === b));
+        changed();
+      }));
+      $$('[data-box-kind]', p).forEach(b => b.addEventListener('click', () => {
+        o.boxType = b.dataset.boxKind;
+        $$('[data-box-kind]', p).forEach(x => {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-pressed', String(x === b));
+        });
         changed();
       }));
       if (o.type === 'arrow') {
@@ -1560,9 +1582,14 @@
       location.reload();
       return;
     }
-    $('#update-bar').hidden = false; // mid-use: let them finish, then tap Refresh
+    // Mid-use: let them finish, then tap Refresh. (An older saved page may not have the bar.)
+    const bar = $('#update-bar');
+    if (bar) bar.hidden = false;
   }
-  $('#update-now').addEventListener('click', async () => {
+  // Optional lookups are guarded: a stale saved index.html can pair with a newer app.js, and an
+  // error here would stop the whole site from starting.
+  const updateNow = $('#update-now');
+  if (updateNow) updateNow.addEventListener('click', async () => {
     if (editorDirty && !confirm('You have unsaved changes. Refresh anyway?')) return;
     editorDirty = false;
     const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
