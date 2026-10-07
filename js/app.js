@@ -359,6 +359,31 @@
   /* =========================================================
    * Drills
    * ======================================================= */
+  /*
+   * A drill can have several targets (T1, T2, …) for transition drills. Marks are one list in
+   * shot order; each mark's `t` is its target (0 = T1). Older drills have no `t` / targetCount
+   * and are simply one-target drills.
+   */
+  const MAX_TARGETS = 6;
+  function targetCount(d) {
+    return Math.max(1, parseInt(d.targetCount, 10) || 1, ...(d.marks || []).map(mk => (mk.t || 0) + 1));
+  }
+  function targetsHTML(d, opts) {
+    opts = opts || {};
+    const n = targetCount(d);
+    const marks = (d.marks || []).map((mk, i) => Object.assign({}, mk, { i }));
+    let html = '';
+    for (let t = 0; t < n; t++) {
+      const mine = marks.filter(mk => (mk.t || 0) === t);
+      const caption = opts.mini || (n === 1 && !opts.editable) ? '' : `<figcaption>
+        <span class="tgt-label">T${t + 1}</span><small>${mine.length} shot${mine.length === 1 ? '' : 's'}</small>
+        ${opts.editable && n > 1 ? `<button type="button" class="icon-btn" data-remove-target="${t}" title="Remove T${t + 1}" aria-label="Remove target T${t + 1}">×</button>` : ''}
+      </figcaption>`;
+      html += `<figure class="tgt" data-t="${t}">${caption}${Target.svg(mine, opts)}</figure>`;
+    }
+    return `<div class="targets${n > 1 ? ' multi' : ''}" style="--cols:${n};--cols-sm:${Math.min(n, 3)}">${html}</div>`;
+  }
+
   function renderDrillList() {
     const render = () => {
       const drills = Store.all('drills').sort((a, b) => a.name.localeCompare(b.name));
@@ -367,10 +392,10 @@
         ${drills.length ? `<div class="grid items">${drills.map(d => {
           const best = rankRuns(runsFor('drill', d.id))[0];
           return `<a class="card item-card" href="#/drills/${esc(d.id)}">
-            <div class="thumb target-thumb">${Target.svg(d.marks, { mini: true })}</div>
+            <div class="thumb target-thumb${targetCount(d) > 1 ? ' multi' : ''}">${targetsHTML(d, { mini: true })}</div>
             <div class="item-body">
               <h3>${esc(d.name)}</h3>
-              <div class="meta"><span class="pill">Par ${fmtTime(d.par)}s</span>${d.distance ? `<span>${esc(d.distance)} yd</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span></div>
+              <div class="meta"><span class="pill">Par ${fmtTime(d.par)}s</span>${d.distance ? `<span>${esc(d.distance)} yd</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span>${targetCount(d) > 1 ? `<span>${targetCount(d)} targets</span>` : ''}</div>
               <div class="best">${best ? `🏆 ${fmtTime(best.best.time)}s — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
             </div>
           </a>`;
@@ -386,24 +411,33 @@
     const d = Store.get('drills', id);
     if (!d) return notFound('Drill', '#/drills');
     const rounds = d.rounds || (d.marks || []).length;
+    const multi = targetCount(d) > 1;
+    const details = `
+          <div class="stats-row tight">
+            <div class="stat-card accent"><span class="value">${fmtTime(d.par)}<small>s</small></span><span class="label">Par time</span></div>
+            <div class="stat-card"><span class="value">${rounds || '—'}</span><span class="label">Rounds</span></div>
+            <div class="stat-card"><span class="value">${d.distance ? esc(d.distance) + '<small>yd</small>' : '—'}</span><span class="label">Distance</span></div>
+          </div>
+          <div class="card"><h3>Instructions</h3><div class="instructions">${d.instructions ? nl2br(d.instructions) : '<em class="muted">No instructions.</em>'}</div></div>`;
     app.innerHTML = `
       <a class="back" href="#/drills">← All drills</a>
       <div class="page-head">
         <div><p class="eyebrow">Drill</p><h1>${esc(d.name)}</h1></div>
         <div class="actions"><button class="btn primary mobile-only" type="button" data-jump-record>⏱ Record time</button><a class="btn" href="#/drills/${esc(id)}/edit">Edit</a><button class="btn danger-outline" id="del-item">Delete</button></div>
       </div>
+      ${multi ? `
+      <div class="card target-card multi">${targetsHTML(d, { numbers: true })}
+        <p class="hint center">Numbers show the shot order across targets.</p></div>
+      <div class="two-col even">
+        <div class="stack">${details}</div>
+        ${recordFormHTML('drill')}
+      </div>` : `
       <div class="two-col">
-        <div class="card target-card">${Target.svg(d.marks, { numbers: true })}</div>
-        <div class="stack">
-          <div class="stats-row tight">
-            <div class="stat-card accent"><span class="value">${fmtTime(d.par)}<small>s</small></span><span class="label">Par time</span></div>
-            <div class="stat-card"><span class="value">${rounds || '—'}</span><span class="label">Rounds</span></div>
-            <div class="stat-card"><span class="value">${d.distance ? esc(d.distance) + '<small>yd</small>' : '—'}</span><span class="label">Distance</span></div>
-          </div>
-          <div class="card"><h3>Instructions</h3><div class="instructions">${d.instructions ? nl2br(d.instructions) : '<em class="muted">No instructions.</em>'}</div></div>
+        <div class="card target-card">${targetsHTML(d, { numbers: true })}</div>
+        <div class="stack">${details}
           ${recordFormHTML('drill')}
         </div>
-      </div>
+      </div>`}
       <div id="times-section"></div>`;
 
     bindRecordForm('drill', () => Store.get('drills', id));
@@ -428,6 +462,7 @@
     if (id && !existing) return notFound('Drill', '#/drills');
     const d = existing ? JSON.parse(JSON.stringify(existing)) : { name: '', par: '', distance: '', rounds: '', instructions: '', marks: [] };
     d.marks = d.marks || [];
+    d.targetCount = targetCount(d);
     let roundsTouched = !!existing && num(existing.rounds) !== null && num(existing.rounds) !== d.marks.length;
     const back = existing ? '#/drills/' + id : '#/drills';
 
@@ -443,7 +478,7 @@
               <label>Distance (yd) <input name="distance" type="number" step="1" min="0" inputmode="numeric" value="${esc(d.distance == null ? '' : d.distance)}" placeholder="7"></label>
               <label>Rounds <input name="rounds" type="number" step="1" min="0" inputmode="numeric" value="${esc(d.rounds == null ? '' : d.rounds)}"></label>
             </div>
-            <label>Instructions <textarea name="instructions" rows="9" placeholder="Start position, string of fire, reloads, scoring…">${esc(d.instructions)}</textarea></label>
+            <label>Instructions <textarea name="instructions" rows="9" placeholder="Start position, string of fire, transitions, reloads, scoring…">${esc(d.instructions)}</textarea></label>
           </div>
           <div class="form-actions">
             <button type="submit" class="btn primary">${existing ? 'Save changes' : 'Create drill'}</button>
@@ -452,9 +487,13 @@
         </div>
         <div class="card target-editor">
           <div class="row-between"><h3>Shot placement</h3><span class="pill" id="mark-count"></span></div>
-          <p class="hint">Tap the target to place an <b>X</b>. Tap an X to remove it.</p>
+          <p class="hint">Tap a target to place an <b>X</b>; tap an X to remove it. Shots are numbered in the order you place them, so for a transition drill tap them in the order they should be fired.</p>
           <div id="target-area"></div>
-          <div class="actions"><button type="button" class="btn sm" id="undo-mark">↶ Undo</button><button type="button" class="btn sm" id="clear-marks">Clear all</button></div>
+          <div class="actions">
+            <button type="button" class="btn sm" id="add-target">+ Add target</button>
+            <button type="button" class="btn sm" id="undo-mark">↶ Undo</button>
+            <button type="button" class="btn sm" id="clear-marks">Clear all</button>
+          </div>
         </div>
       </form>`;
 
@@ -463,20 +502,41 @@
     const area = $('#target-area');
 
     function drawTarget() {
-      area.innerHTML = Target.svg(d.marks, { numbers: true, editable: true });
+      area.innerHTML = targetsHTML(d, { numbers: true, editable: true });
+      area.classList.toggle('multi', d.targetCount > 1);
       $('#mark-count').textContent = `${d.marks.length} shot${d.marks.length === 1 ? '' : 's'} marked`;
+      $('#add-target').disabled = d.targetCount >= MAX_TARGETS;
       if (!roundsTouched) f.rounds.value = d.marks.length || '';
     }
     area.addEventListener('click', e => {
-      const svg = $('svg', area);
-      const mark = e.target.closest('.mark');
-      if (mark) {
-        d.marks.splice(+mark.dataset.i, 1);
+      const removeBtn = e.target.closest('[data-remove-target]');
+      if (removeBtn) {
+        const t = +removeBtn.dataset.removeTarget;
+        const shots = d.marks.filter(mk => (mk.t || 0) === t).length;
+        if (shots && !confirm(`Remove T${t + 1} and its ${shots} shot${shots === 1 ? '' : 's'}?`)) return;
+        d.marks = d.marks.filter(mk => (mk.t || 0) !== t).map(mk => ((mk.t || 0) > t ? Object.assign({}, mk, { t: mk.t - 1 }) : mk));
+        d.targetCount--;
       } else {
-        const p = svgPoint(svg, e);
-        if (p.x < -Target.PAD || p.y < -Target.PAD || p.x > Target.W + Target.PAD || p.y > Target.H + Target.PAD) return;
-        d.marks.push({ x: Math.round(p.x), y: Math.round(p.y) });
+        const fig = e.target.closest('.tgt');
+        const svg = fig && e.target.closest('svg');
+        if (!svg) return;
+        const mark = e.target.closest('.mark');
+        if (mark) {
+          d.marks.splice(+mark.dataset.i, 1);
+        } else {
+          const p = svgPoint(svg, e);
+          if (p.x < -Target.PAD || p.y < -Target.PAD || p.x > Target.W + Target.PAD || p.y > Target.H + Target.PAD) return;
+          const mk = { x: Math.round(p.x), y: Math.round(p.y) };
+          if (+fig.dataset.t > 0) mk.t = +fig.dataset.t;
+          d.marks.push(mk);
+        }
       }
+      editorDirty = true;
+      drawTarget();
+    });
+    $('#add-target').addEventListener('click', () => {
+      if (d.targetCount >= MAX_TARGETS) return;
+      d.targetCount++;
       editorDirty = true;
       drawTarget();
     });
@@ -500,6 +560,7 @@
         rounds: parseInt(f.rounds.value, 10) || d.marks.length,
         instructions: f.instructions.value.trim(),
         marks: d.marks,
+        targetCount: d.targetCount,
       };
       let newId = id;
       if (existing) Store.update('drills', id, data);

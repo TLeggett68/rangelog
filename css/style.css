@@ -250,6 +250,20 @@ a.winner-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(
 .target-svg.editable .mark:hover path:last-of-type { stroke: #ff5252; }
 .mark-num { font: 700 11px sans-serif; fill: #b71c1c; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
 .target-editor { position: sticky; top: 84px; }
+.targets { display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); gap: 14px; align-items: end; }
+.tgt { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.tgt figcaption { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--muted); font-weight: 600; min-height: 28px; }
+.tgt-label { background: var(--g800); color: #fff; font-weight: 800; font-size: .75rem; letter-spacing: .04em; padding: 2px 9px; border-radius: 999px; }
+.tgt figcaption .icon-btn { width: 28px; height: 28px; font-size: 1.15rem; }
+.targets .target-svg { width: 100%; max-width: 340px; }
+.target-card.multi { margin-bottom: 16px; }
+.target-card.multi .target-svg { max-width: 260px; }
+.target-card.multi .hint { margin: 10px 0 0; }
+.target-thumb.multi { width: auto; }
+.target-thumb.multi .targets { gap: 4px; }
+.target-thumb.multi .tgt { width: 36px; }
+.target-thumb.multi .mark-body { transform: scale(2); }
+.target-editor button:disabled { opacity: .45; cursor: not-allowed; }
 .instructions { line-height: 1.6; }
 
 /* ---------- stage / bay ---------- */
@@ -446,6 +460,9 @@ label.check input { width: auto; margin: 0; accent-color: var(--g600); }
   .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
   .site-footer { padding-bottom: 12px; }
   .target-card .target-svg { max-width: 240px; }
+  .targets { grid-template-columns: repeat(var(--cols-sm, 1), minmax(0, 1fr)); gap: 8px; }
+  .tgt figcaption small { display: none; }
+  .targets.multi .mark-body { transform: scale(1.7); } /* small targets: keep X's and shot numbers readable */
   .history-head .who-label { width: 100%; }
   .progress-grid { grid-template-columns: 1fr; }
   .history-stats { grid-template-columns: repeat(2, 1fr); }

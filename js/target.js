@@ -1,6 +1,8 @@
 /*
  * Silhouette target (USPSA-style shape). Coordinates are in a 180 x 300 box
  * (roughly 10 units per inch). Shot marks are stored as { x, y } in that space.
+ * A mark may carry `i`, its index in the drill's shot order across all targets;
+ * it's used for the shot number and for data-i (to remove it in the editor).
  */
 (function () {
   'use strict';
@@ -14,13 +16,16 @@
     marks = marks || [];
     opts = opts || {};
     const cls = ['target-svg', opts.editable ? 'editable' : '', opts.mini ? 'mini' : ''].join(' ').trim();
-    const markSvg = marks.map((m, i) => `
-      <g class="mark" data-i="${i}" transform="translate(${m.x},${m.y})">
+    const markSvg = marks.map((m, k) => {
+      const i = m.i != null ? m.i : k;
+      return `
+      <g class="mark" data-i="${i}" transform="translate(${m.x},${m.y})"><g class="mark-body">
         <circle r="11" fill="transparent"/>
         <path d="M-7,-7 L7,7 M7,-7 L-7,7" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/>
         <path d="M-7,-7 L7,7 M7,-7 L-7,7" stroke="#c62828" stroke-width="3.5" stroke-linecap="round"/>
         ${opts.numbers ? `<text x="9" y="-6" class="mark-num">${i + 1}</text>` : ''}
-      </g>`).join('');
+      </g></g>`;
+    }).join('');
 
     return `<svg class="${cls}" viewBox="${-PAD} ${-PAD} ${W + PAD * 2} ${H + PAD * 2}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Silhouette target with ${marks.length} shot marks">
       <path d="${OUTLINE}" fill="#dcbd8e" stroke="${INK}" stroke-width="2"/>
