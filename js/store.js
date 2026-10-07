@@ -156,54 +156,58 @@
     get(c, id) { return cache[c].find(x => x.id === id) || null; },
     onChange(fn) { listeners.push(fn); },
 
-    // Writes are fire-and-forget so they work offline; returns the new id immediately.
+    // Every write updates this browser's copy right away (so the page that opens next can see it),
+    // then goes to Firestore in the background so it also works offline. In cloud mode Firestore's
+    // next snapshot replaces the copy with the real data, and rolls it back if a write is rejected.
     add(c, obj) {
       const id = uid();
       const data = plain(Object.assign({}, obj, { id, createdAt: Date.now() }));
       if (c === 'times' && !DATE_RE.test(data.date || '')) data.date = isoToday();
+      cache[c].push(data);
 
       if (mode === 'local') {
-        cache[c].push(data);
         writeLocal();
-        emit();
       } else if (c === 'times') {
-        const date = data.date;
-        delete data.date;
+        const run = Object.assign({}, data);
+        delete run.date;
+        rawRuns.set(id, { date: data.date, raw: run });
         const FV = firebase.firestore.FieldValue;
-        db.collection('days').doc(date).set({ date, runs: FV.arrayUnion(data) }, { merge: true }).catch(writeFailed);
+        db.collection('days').doc(data.date).set({ date: data.date, runs: FV.arrayUnion(run) }, { merge: true }).catch(writeFailed);
       } else {
-        delete data.id;
-        db.collection(c).doc(id).set(data).catch(writeFailed);
+        const doc = Object.assign({}, data);
+        delete doc.id;
+        db.collection(c).doc(id).set(doc).catch(writeFailed);
       }
+      emit();
       return id;
     },
 
     update(c, id, obj) {
       const data = plain(Object.assign({}, obj, { updatedAt: Date.now() }));
       delete data.id;
-      if (mode === 'local') {
-        const i = cache[c].findIndex(x => x.id === id);
-        if (i >= 0) cache[c][i] = Object.assign({}, cache[c][i], data, { id });
-        writeLocal();
-        emit();
-      } else {
-        db.collection(c).doc(id).set(data, { merge: true }).catch(writeFailed);
-      }
+      const i = cache[c].findIndex(x => x.id === id);
+      if (i >= 0) cache[c][i] = Object.assign({}, cache[c][i], data, { id });
+
+      if (mode === 'local') writeLocal();
+      else db.collection(c).doc(id).set(data, { merge: true }).catch(writeFailed);
+      emit();
     },
 
     remove(c, id) {
+      const ref = c === 'times' ? rawRuns.get(id) : null;
+      cache[c] = cache[c].filter(x => x.id !== id);
+
       if (mode === 'local') {
-        cache[c] = cache[c].filter(x => x.id !== id);
         writeLocal();
-        emit();
       } else if (c === 'times') {
-        const ref = rawRuns.get(id);
-        if (!ref) return;
-        const FV = firebase.firestore.FieldValue;
-        db.collection('days').doc(ref.date).update({ runs: FV.arrayRemove(ref.raw) }).catch(writeFailed);
+        if (ref) {
+          const FV = firebase.firestore.FieldValue;
+          db.collection('days').doc(ref.date).update({ runs: FV.arrayRemove(ref.raw) }).catch(writeFailed);
+        }
       } else {
         db.collection(c).doc(id).delete().catch(writeFailed);
       }
+      emit();
     },
 
     resetDemo() {

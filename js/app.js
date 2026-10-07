@@ -83,6 +83,8 @@
   }
   function notFound(what, back) {
     app.innerHTML = emptyState('🤷', `${what} not found`, 'It may have been deleted.', `<a class="btn" href="${back}">Go back</a>`);
+    // If the data shows up a moment later (e.g. still syncing), show the real page.
+    pageRefresh = router;
   }
   function itemFor(kind, id) { return Store.get(kind === 'drill' ? 'drills' : 'stages', id); }
   function runsFor(kind, id) { return Store.all('times').filter(t => t.kind === kind && t.itemId === id); }
