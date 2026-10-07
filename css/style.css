@@ -255,6 +255,9 @@ a.winner-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(
 .tgt figcaption { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--muted); font-weight: 600; min-height: 28px; }
 .tgt-label { background: var(--g800); color: #fff; font-weight: 800; font-size: .75rem; letter-spacing: .04em; padding: 2px 9px; border-radius: 999px; }
 .tgt figcaption .icon-btn { width: 28px; height: 28px; font-size: 1.15rem; }
+.tgt-dist { font-weight: 800; color: var(--g800); font-size: .8rem; }
+.tgt-dist-input { display: flex; align-items: center; gap: 4px; margin: 0; font-size: .8rem; color: var(--muted); font-weight: 700; }
+.tgt-dist-input input { width: 58px; margin: 0; padding: 6px 6px; text-align: center; font-weight: 700; }
 .targets .target-svg { width: 100%; max-width: 340px; }
 .target-card.multi { margin-bottom: 16px; }
 .target-card.multi .target-svg { max-width: 260px; }
@@ -462,6 +465,7 @@ label.check input { width: auto; margin: 0; accent-color: var(--g600); }
   .target-card .target-svg { max-width: 240px; }
   .targets { grid-template-columns: repeat(var(--cols-sm, 1), minmax(0, 1fr)); gap: 8px; }
   .tgt figcaption small { display: none; }
+  .tgt-dist-input input { width: 52px; padding: 8px 4px; }
   .targets.multi .mark-body { transform: scale(1.7); } /* small targets: keep X's and shot numbers readable */
   .history-head .who-label { width: 100%; }
   .progress-grid { grid-template-columns: 1fr; }

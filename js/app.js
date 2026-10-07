@@ -362,9 +362,26 @@
   /*
    * A drill can have several targets (T1, T2, …) for transition drills. Marks are one list in
    * shot order; each mark's `t` is its target (0 = T1). Older drills have no `t` / targetCount
-   * and are simply one-target drills.
+   * and are simply one-target drills. `targetDistances[t]` optionally sets a target's own
+   * distance; blank falls back to the drill's `distance`.
    */
   const MAX_TARGETS = 6;
+  function targetDistance(d, t) {
+    if (targetCount(d) > 1) {
+      const own = num((d.targetDistances || [])[t]);
+      if (own !== null) return own;
+    }
+    return num(d.distance);
+  }
+  // "7 yd", or "7–15 yd" when targets are at different distances.
+  function distanceText(d) {
+    const n = targetCount(d);
+    const ds = [];
+    for (let t = 0; t < n; t++) { const v = targetDistance(d, t); if (v !== null) ds.push(v); }
+    if (!ds.length) return '';
+    const lo = Math.min(...ds), hi = Math.max(...ds);
+    return lo === hi ? `${lo} yd` : `${lo}–${hi} yd`;
+  }
   function targetCount(d) {
     return Math.max(1, parseInt(d.targetCount, 10) || 1, ...(d.marks || []).map(mk => (mk.t || 0) + 1));
   }
@@ -376,10 +393,15 @@
     for (let t = 0; t < n; t++) {
       const mine = marks.filter(mk => (mk.t || 0) === t);
       const caption = opts.mini || (n === 1 && !opts.editable) ? '' : `<figcaption>
-        <span class="tgt-label">T${t + 1}</span><small>${mine.length} shot${mine.length === 1 ? '' : 's'}</small>
+        <span class="tgt-label">T${t + 1}</span>${!opts.editable && targetDistance(d, t) !== null ? `<span class="tgt-dist">${targetDistance(d, t)} yd</span>` : ''}<small>${mine.length} shot${mine.length === 1 ? '' : 's'}</small>
         ${opts.editable && n > 1 ? `<button type="button" class="icon-btn" data-remove-target="${t}" title="Remove T${t + 1}" aria-label="Remove target T${t + 1}">×</button>` : ''}
       </figcaption>`;
-      html += `<figure class="tgt" data-t="${t}">${caption}${Target.svg(mine, opts)}</figure>`;
+      const own = (d.targetDistances || [])[t];
+      const distInput = opts.editable && n > 1 ? `<label class="tgt-dist-input">
+          <input type="number" min="0" max="999" step="1" inputmode="numeric" data-dist="${t}" value="${esc(own == null ? '' : own)}"
+            placeholder="${esc(num(d.distance) == null ? '–' : d.distance)}" aria-label="T${t + 1} distance in yards"> yd
+        </label>` : '';
+      html += `<figure class="tgt" data-t="${t}">${caption}${Target.svg(mine, opts)}${distInput}</figure>`;
     }
     return `<div class="targets${n > 1 ? ' multi' : ''}" style="--cols:${n};--cols-sm:${Math.min(n, 3)}">${html}</div>`;
   }
@@ -395,7 +417,7 @@
             <div class="thumb target-thumb${targetCount(d) > 1 ? ' multi' : ''}">${targetsHTML(d, { mini: true })}</div>
             <div class="item-body">
               <h3>${esc(d.name)}</h3>
-              <div class="meta"><span class="pill">Par ${fmtTime(d.par)}s</span>${d.distance ? `<span>${esc(d.distance)} yd</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span>${targetCount(d) > 1 ? `<span>${targetCount(d)} targets</span>` : ''}</div>
+              <div class="meta"><span class="pill">Par ${fmtTime(d.par)}s</span>${distanceText(d) ? `<span>${distanceText(d)}</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span>${targetCount(d) > 1 ? `<span>${targetCount(d)} targets</span>` : ''}</div>
               <div class="best">${best ? `🏆 ${fmtTime(best.best.time)}s — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
             </div>
           </a>`;
@@ -416,7 +438,7 @@
           <div class="stats-row tight">
             <div class="stat-card accent"><span class="value">${fmtTime(d.par)}<small>s</small></span><span class="label">Par time</span></div>
             <div class="stat-card"><span class="value">${rounds || '—'}</span><span class="label">Rounds</span></div>
-            <div class="stat-card"><span class="value">${d.distance ? esc(d.distance) + '<small>yd</small>' : '—'}</span><span class="label">Distance</span></div>
+            <div class="stat-card"><span class="value">${distanceText(d) ? distanceText(d).replace(' yd', '<small>yd</small>') : '—'}</span><span class="label">Distance</span></div>
           </div>
           <div class="card"><h3>Instructions</h3><div class="instructions">${d.instructions ? nl2br(d.instructions) : '<em class="muted">No instructions.</em>'}</div></div>`;
     app.innerHTML = `
@@ -463,6 +485,7 @@
     const d = existing ? JSON.parse(JSON.stringify(existing)) : { name: '', par: '', distance: '', rounds: '', instructions: '', marks: [] };
     d.marks = d.marks || [];
     d.targetCount = targetCount(d);
+    d.targetDistances = (d.targetDistances || []).slice(0, d.targetCount);
     let roundsTouched = !!existing && num(existing.rounds) !== null && num(existing.rounds) !== d.marks.length;
     const back = existing ? '#/drills/' + id : '#/drills';
 
@@ -487,7 +510,7 @@
         </div>
         <div class="card target-editor">
           <div class="row-between"><h3>Shot placement</h3><span class="pill" id="mark-count"></span></div>
-          <p class="hint">Tap a target to place an <b>X</b>; tap an X to remove it. Shots are numbered in the order you place them, so for a transition drill tap them in the order they should be fired.</p>
+          <p class="hint">Tap a target to place an <b>X</b>; tap an X to remove it. Shots are numbered in the order you place them, so for a transition drill tap them in the order they should be fired. With more than one target, set each target's distance under it (blank uses the drill distance).</p>
           <div id="target-area"></div>
           <div class="actions">
             <button type="button" class="btn sm" id="add-target">+ Add target</button>
@@ -515,6 +538,7 @@
         const shots = d.marks.filter(mk => (mk.t || 0) === t).length;
         if (shots && !confirm(`Remove T${t + 1} and its ${shots} shot${shots === 1 ? '' : 's'}?`)) return;
         d.marks = d.marks.filter(mk => (mk.t || 0) !== t).map(mk => ((mk.t || 0) > t ? Object.assign({}, mk, { t: mk.t - 1 }) : mk));
+        d.targetDistances.splice(t, 1);
         d.targetCount--;
       } else {
         const fig = e.target.closest('.tgt');
@@ -547,6 +571,15 @@
     form.addEventListener('input', e => {
       editorDirty = true;
       if (e.target.name === 'rounds') roundsTouched = f.rounds.value !== '';
+      if (e.target.dataset.dist != null) {
+        // Per-target distance; don't redraw (that would close the phone keyboard).
+        const v = num(e.target.value);
+        d.targetDistances[+e.target.dataset.dist] = v === null ? null : Math.round(v);
+      }
+      if (e.target.name === 'distance') {
+        // Blank target distances show the drill distance as their placeholder.
+        $$('[data-dist]', area).forEach(inp => { inp.placeholder = f.distance.value || '–'; });
+      }
     });
     form.addEventListener('submit', e => {
       e.preventDefault();
@@ -561,6 +594,9 @@
         instructions: f.instructions.value.trim(),
         marks: d.marks,
         targetCount: d.targetCount,
+        targetDistances: d.targetCount > 1
+          ? Array.from({ length: d.targetCount }, (_, t) => (d.targetDistances[t] == null ? null : d.targetDistances[t]))
+          : null,
       };
       let newId = id;
       if (existing) Store.update('drills', id, data);
@@ -966,7 +1002,7 @@
     function mountForm() {
       const { kind, id, item } = itemOf(current);
       $('#item-info').innerHTML = kind === 'drill'
-        ? `<span class="pill">Par ${fmtTime(item.par)}s</span>${item.rounds ? `<span>${esc(item.rounds)} rds</span>` : ''}${item.distance ? `<span>${esc(item.distance)} yd</span>` : ''}<a href="#/drills/${esc(id)}">View drill →</a>`
+        ? `<span class="pill">Par ${fmtTime(item.par)}s</span>${item.rounds ? `<span>${esc(item.rounds)} rds</span>` : ''}${distanceText(item) ? `<span>${distanceText(item)}</span>` : ''}<a href="#/drills/${esc(id)}">View drill →</a>`
         : `<span class="pill">${Stage.rounds(item.objects)} rds min</span><a href="#/stages/${esc(id)}">View stage →</a>`;
       $('#record-slot').innerHTML = recordFormHTML(kind);
       bindRecordForm(kind, () => itemFor(kind, id));
