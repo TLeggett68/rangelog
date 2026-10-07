@@ -376,6 +376,14 @@ label.check input { width: auto; margin: 0; accent-color: var(--g600); }
   box-shadow: 0 6px 18px rgba(20, 48, 31, .14); font-size: .8rem; white-space: nowrap;
 }
 
+.update-bar {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 60;
+  display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100% - 32px);
+  background: var(--g900); color: #fff; padding: 10px 12px 10px 16px; border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .25); font-weight: 600; font-size: .92rem;
+}
+.update-bar .btn { background: #fff; color: var(--g800); border-color: #fff; }
+
 /* ---------- shared bits used by the phone layout ---------- */
 .tabbar, .header-settings, .mobile-only { display: none; }
 .big-input { font-family: Oswald, system-ui, sans-serif; font-size: 1.6rem !important; font-weight: 600; padding: 8px 12px; letter-spacing: .02em; }
@@ -461,6 +469,7 @@ label.check input { width: auto; margin: 0; accent-color: var(--g600); }
   .table .pen-note { white-space: normal; }
   .scroll { max-height: none; }
   .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .update-bar { bottom: calc(80px + env(safe-area-inset-bottom)); }
   .site-footer { padding-bottom: 12px; }
   .target-card .target-svg { max-width: 240px; }
   .targets { grid-template-columns: repeat(var(--cols-sm, 1), minmax(0, 1fr)); gap: 8px; }

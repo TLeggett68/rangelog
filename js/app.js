@@ -1524,7 +1524,62 @@
   // Offline support: lets the site open at the range with no signal once it has been visited.
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    // When updated offline code takes over, reload so the page uses the new files right away.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloadingForSw = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloadingForSw || editorDirty) return;
+      reloadingForSw = true;
+      location.reload();
+    });
   }
+
+  /*
+   * Update check. js/version.js is re-stamped on every commit; compare the copy this page loaded
+   * with the live one (cache: 'no-store' skips every saved copy). Phones — especially home-screen
+   * apps resumed from memory — can otherwise keep showing an old version.
+   */
+  const UPDATE_KEY = 'rangelog-reloaded-for';
+  async function checkForUpdate(atStartup) {
+    if (!location.protocol.startsWith('http') || !window.APP_VERSION) return;
+    let latest;
+    try {
+      const text = await (await fetch('js/version.js', { cache: 'no-store' })).text();
+      latest = (text.match(/APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
+    } catch (e) { return; } // offline: keep using what we have
+    if (!latest || latest === window.APP_VERSION) return;
+
+    let alreadyTried = false;
+    try { alreadyTried = sessionStorage.getItem(UPDATE_KEY) === latest; } catch (e) { /* ignore */ }
+    const typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '');
+    if (atStartup && !alreadyTried && !editorDirty && !typing) {
+      // Nothing typed yet: just load the new version (once, so a stubborn cache can't loop).
+      try { sessionStorage.setItem(UPDATE_KEY, latest); } catch (e) { /* ignore */ }
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      if (reg) { try { await reg.update(); } catch (e) { /* ignore */ } }
+      location.reload();
+      return;
+    }
+    $('#update-bar').hidden = false; // mid-use: let them finish, then tap Refresh
+  }
+  $('#update-now').addEventListener('click', async () => {
+    if (editorDirty && !confirm('You have unsaved changes. Refresh anyway?')) return;
+    editorDirty = false;
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    if (reg) { try { await reg.update(); } catch (e) { /* ignore */ } }
+    location.reload();
+  });
+  // Check again when someone comes back to the site: switching back to the tab or app, clicking
+  // back into the window, or returning with the Back button. At most once a minute.
+  let lastCheck = Date.now();
+  const recheck = () => {
+    if (document.visibilityState !== 'visible' || Date.now() - lastCheck < 60000) return;
+    lastCheck = Date.now();
+    checkForUpdate(false);
+  };
+  document.addEventListener('visibilitychange', recheck);
+  window.addEventListener('focus', recheck);
+  window.addEventListener('pageshow', e => { if (e.persisted) { lastCheck = 0; recheck(); } });
 
   if (window.GROUP_NAME) { $('#brand-name').textContent = window.GROUP_NAME; document.title = window.GROUP_NAME; }
   if (window.GROUP_TAGLINE) $('#brand-sub').textContent = window.GROUP_TAGLINE;
@@ -1534,5 +1589,6 @@
     renderFooter();
     window.addEventListener('hashchange', onHashChange);
     router();
+    checkForUpdate(true);
   });
 })();

@@ -51,6 +51,10 @@
   <main class="wrap" id="app"><div class="loading">Loading…</div></main>
   <footer class="site-footer wrap" id="footer"></footer>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="update-bar" class="update-bar" role="status" hidden>
+    <span>A new version of the site is ready.</span>
+    <button type="button" class="btn sm" id="update-now">Refresh</button>
+  </div>
 
   <!-- Phone navigation (bottom tab bar) -->
   <nav class="tabbar" aria-label="Main">
@@ -76,6 +80,7 @@
     </a>
   </nav>
 
+  <script src="js/version.js"></script>
   <script src="js/config.js"></script>
   <script src="js/store.js"></script>
   <script src="js/target.js"></script>

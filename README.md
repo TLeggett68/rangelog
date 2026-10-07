@@ -94,6 +94,12 @@ To update the site later, upload the changed files to the repository again.
 - **Stages:** use the **Add** toolbar, then drag objects into place. Tap an object to edit its label, shot count, notes, rotation (any angle from 0–359°, using the slider, the ±15° buttons or by typing the degrees) or size. To show the shooter's route, tap **Draw route** and press and drag on the map. When you let go, the line becomes an arrow pointing where you finished. Draw as many as you need, then tap **Done drawing**. Tap an arrow to change its color, make it dashed, flip its direction or add a note (e.g. "reload on the move"). With a keyboard, arrow keys nudge the selected object (Shift moves farther) and Delete removes it. The bay is drawn 30 yd wide × 20 yd deep, with downrange at the top.
 - **Day View:** this is the home page. Use the arrows, the date picker or the "Range days" chips to look at other days. Rankings use each shooter's best run of the day.
 
+## Updates
+
+When a new version is published, the site notices within about a minute of being opened or switched back to. If you haven't started typing, it reloads itself; otherwise a bar appears at the bottom with a **Refresh** button. To force it immediately on a computer, press **Cmd + Shift + R** (Mac) or **Ctrl + Shift + R** (Windows).
+
+The version number in `js/version.js` is updated automatically on every commit by a git hook in this folder (`.git/hooks/pre-commit`).
+
 ## Trying things out safely
 
 Add `?demo` to the address (for example `https://tleggett68.github.io/rangelog/?demo`) to use the site on sample data saved only in your own browser. Nothing you do there touches the group's real data.
