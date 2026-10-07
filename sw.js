@@ -4,11 +4,13 @@
  * Firestore's own offline cache.)
  *
  * - Site files: try the network first so updates show up right away; if the
- *   network is slow (3 s) or offline, use the saved copy.
+ *   network is slow (3 s) or offline, use the saved copy. GitHub Pages tells
+ *   browsers to reuse files for 10 minutes, so ask the server every time
+ *   (cache: 'no-cache' — a quick "has this changed?" check).
  * - Fonts and the Firebase library: use the saved copy (they never change).
  * - Everything else (the Firestore database itself) is not touched.
  */
-const CACHE = 'rangelog-v1';
+const CACHE = 'rangelog-v2';
 const SHELL = [
   './', 'index.html', 'css/style.css',
   'js/config.js', 'js/store.js', 'js/target.js', 'js/stage.js', 'js/app.js',
@@ -42,7 +44,11 @@ function networkFirst(req) {
     const finish = res => { if (!done && res) { done = true; resolve(res); } };
     const fromCache = () => cache.match(req, { ignoreSearch: true });
     const timer = setTimeout(() => fromCache().then(finish), 3000);
-    fetch(req)
+    // Page loads are "navigate" requests, which some browsers won't copy with new options; fetch by URL.
+    const fresh = req.mode === 'navigate'
+      ? fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' })
+      : fetch(req, { cache: 'no-cache' });
+    fresh
       .then(res => {
         clearTimeout(timer);
         if (res.ok) cache.put(req, res.clone());
