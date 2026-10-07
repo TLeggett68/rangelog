@@ -6,6 +6,13 @@ A simple website for our church shooting group:
 - **Drills**: one or more silhouette targets (up to 6, for transition drills) where you mark shot placement with X's, plus instructions and a par time. Shooters record their times and see how they compare to par.
 - **Stages**: an overhead range bay where you drag in targets, steel, no-shoots, barrels, walls and shooting boxes, and draw arrows to show the route to move. Each target can have a note on where to shoot and how many shots. Shooters record their stage times.
 - **Shooter history**: each shooter's progress on every drill and stage: personal best, average, group rank, improvement since their first day, a chart of their best time each range day, and their penalty habits.
+- **Season standings**: points for placings on every drill and stage each range day, by month, year or all time, plus Most Improved.
+- **Range day plan**: the next range day's date, a note, the drills and stages in order, and the shooting order. It shows on the home page, and on the day the Record screen steps through it.
+- **Gun types**: tag each run (Pistol, PCC, Rifle and so on) and filter leaderboards by gun.
+- **Hit factor scoring** (optional, per stage): USPSA-style points ÷ time.
+- **Personal goals**: each member can set a target per drill or stage and track progress toward it.
+- **Dry fire timer**: random-delay start beep and par beep for dry-fire practice. **Dry fire only. Use a real shot timer for live fire.**
+- **Export**: download every time as a spreadsheet (CSV), or a full backup.
 - **Members**: the group roster. Members appear in a dropdown when recording times, with a "Guest" option for visitors.
 - **Penalties**: C-zone hits, D-zone hits and misses (plus no-shoots and procedurals on stages) are added to the raw time automatically. You set how many seconds each one costs on the **Settings** page.
 
@@ -84,6 +91,22 @@ To update the site later, upload the changed files to the repository again.
 - On a drill or stage page, the **⏱ Record time** button jumps straight to the form.
 - **Weak signal at the range:** once a phone has opened the site, it can open it again with no signal. Times entered offline are saved on the phone and upload when it reconnects.
 
+### Range days
+
+- **Plan a range day:** on the home page tap **📋 Range day plan** (or Settings → Range day). Set the date and a note, add the drills and stages in the order you'll shoot them, and set the shooting order (there's a 🔀 Shuffle button). The home page shows it as **Next range day**.
+- **On the day:** open **Record**. Today's plan is at the top of the drill/stage list. The shooter is picked for you in order and moves to the next person after each save. Tap any name in the order to jump to them. When everyone has shot, **Next: …** moves you to the next item.
+
+### Scoring, guns and goals
+
+- **Gun types:** pick the gun on the record form (each phone remembers the last one). Tap the **Gun** chips above a leaderboard to show just one gun type. Edit the list in **Settings → Gun types**.
+- **Hit factor:** in the stage editor set **Scoring** to **Hit factor**. When recording, enter the time and count A / C / D hits (count steel as A), misses, no-shoots and procedurals, and choose Minor or Major. Points: A 5, C 3 (4 major), D 1 (2 major), and −10 for each miss, no-shoot or procedural. Hit factor = points ÷ time; higher wins. Switching a stage's scoring later keeps old runs in its history, but only runs scored the current way are ranked.
+- **Goals:** on a member's history page, tap **🎯 Set a goal** on any drill or stage. The card then shows how far there is to go and a progress bar, and the chart shows a goal line.
+- **Season standings:** home page → **🏆 Season standings** (also in the top menu on a computer). Each range day, every drill and stage gives 10 / 8 / 6 / 5 / 4 / 3 / 2 points for 1st–7th place and 1 point for everyone else who shot it. Most Improved averages each shooter's improvement from their first to last range day on everything they shot on at least two days in the period.
+
+### Dry fire timer
+
+From **Drills**, or from any drill's page (which fills in that drill's par), tap **⏲ Dry fire timer**. Press **Start**: after a random delay comes a high start beep, then a lower par beep at the par time. The screen flashes for each beep. **This is for dry fire only. Use a real shot timer for live fire.** On an iPhone, turn off silent mode to hear the beeps.
+
 ### Everything else
 
 - **Members:** add everyone on the **Members** page. If people recorded times before you set up members, the page lists those names so you can add them with one click.
@@ -108,7 +131,7 @@ Add `?demo` to the address (for example `https://tleggett68.github.io/rangelog/?
 
 - **There are no logins.** Anyone who has the link can add or delete drills, stages, members and times, and change the penalty settings. That works fine for a small, trusted group. If it ever becomes a problem, Firebase Authentication (also free) can be added.
 - **Free plan limits:** Firestore's free plan allows 50,000 reads and 20,000 writes per day. Times are stored as one record per range day, so even years of history cost very few reads per visit.
-- **Backups:** in the Firebase console you can view every record under Firestore Database → Data.
+- **Backups:** **Settings → Export** downloads all times as a spreadsheet, or everything as a backup file. You can also view every record in the Firebase console under Firestore Database → Data.
 
 ## Files
 

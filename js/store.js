@@ -31,7 +31,13 @@
     { key: 'ns', label: 'No-shoot hits', short: 'NS', def: 5, stageOnly: true },
     { key: 'proc', label: 'Procedurals', short: 'P', def: 3, stageOnly: true },
   ];
-  const DEFAULT_SETTINGS = { penalties: PENALTIES.reduce((o, p) => (o[p.key] = p.def, o), {}) };
+  const DEFAULT_SETTINGS = {
+    penalties: PENALTIES.reduce((o, p) => (o[p.key] = p.def, o), {}),
+    // Gun types ("divisions") a run can be tagged with; editable on the Settings page.
+    divisions: ['Pistol', 'Pistol (optic)', 'PCC', 'Rifle', 'Shotgun'],
+    // Next range day and its plan: { date, note, items: ['drill:id', 'stage:id'], shooters: [memberId | 'guest:Name'] }
+    rangeDay: null,
+  };
 
   const cache = { drills: [], stages: [], times: [], members: [], settings: {} };
   const listeners = [];
@@ -141,10 +147,15 @@
     // Settings merged over defaults, so new keys always have a value.
     settings() {
       const s = cache.settings || {};
-      return { penalties: Object.assign({}, DEFAULT_SETTINGS.penalties, s.penalties || {}) };
+      return {
+        penalties: Object.assign({}, DEFAULT_SETTINGS.penalties, s.penalties || {}),
+        divisions: Array.isArray(s.divisions) ? s.divisions.slice() : DEFAULT_SETTINGS.divisions.slice(),
+        rangeDay: s.rangeDay || null,
+      };
     },
-    saveSettings(obj) {
-      const data = plain(Object.assign({}, obj, { updatedAt: Date.now() }));
+    // Saves only the given keys; everything else in settings is kept.
+    saveSettings(partial) {
+      const data = plain(Object.assign({}, this.settings(), partial, { updatedAt: Date.now() }));
       if (mode === 'local') {
         cache.settings = data;
         writeLocal();
@@ -229,11 +240,22 @@
     let now = Date.now();
     const pens = DEFAULT_SETTINGS.penalties;
     // `time` is the raw time; any penalties are added on top, like a real entry.
-    const run = (itemId, itemName, kind, shooter, time, date, notes, pen) => {
+    const memberIds = { John: 'demo-m0', Mike: 'demo-m1', Sarah: 'demo-m2' };
+    const run = (itemId, itemName, kind, shooter, time, date, notes, pen, division) => {
       const penTime = Object.keys(pen || {}).reduce((sum, k) => sum + pen[k] * pens[k], 0);
       return {
-        id: uid(), kind, itemId, itemName, shooter, raw: time, pen: pen || {}, penTime,
+        id: uid(), kind, itemId, itemName, shooter, memberId: memberIds[shooter] || null, division: division || 'Pistol',
+        raw: time, pen: pen || {}, penTime,
         time: Math.round((time + penTime) * 100) / 100, date, notes: notes || '', createdAt: now++,
+      };
+    };
+    // Hit-factor run (USPSA minor): hits = { a, c, d, m, ns, p }.
+    const hfRun = (shooter, time, hits, date) => {
+      const points = Math.max(0, (hits.a || 0) * 5 + (hits.c || 0) * 3 + (hits.d || 0) - 10 * ((hits.m || 0) + (hits.ns || 0) + (hits.p || 0)));
+      return {
+        id: uid(), kind: 'stage', itemId: 'demo-hf', itemName: 'Steel & Paper', shooter, memberId: memberIds[shooter] || null,
+        division: 'Pistol', scoring: 'hf', par: null, raw: time, time, hits, pf: 'minor', points,
+        hf: Math.round(points / time * 10000) / 10000, date, notes: '', createdAt: now++,
       };
     };
     return {
@@ -249,7 +271,14 @@
           marks: [{ x: 86, y: 145 }, { x: 95, y: 152 }, { x: 90, y: 26 }],
         },
       ],
-      members: ['John', 'Mike', 'Sarah'].map((name, i) => ({ id: 'demo-m' + i, name, createdAt: now })),
+      members: ['John', 'Mike', 'Sarah'].map((name, i) => ({ id: 'demo-m' + i, name, createdAt: now,
+        goals: name === 'John' ? { 'drill:demo-bill': 2.1 } : undefined })),
+      settings: {
+        rangeDay: {
+          date: d0, note: '9 AM at Bay 3. Bring 150 rounds, eye and ear protection.',
+          items: ['drill:demo-bill', 'drill:demo-moz', 'stage:demo-hf'], shooters: ['demo-m2', 'demo-m0', 'demo-m1'],
+        },
+      },
       stages: [
         {
           id: 'demo-stage', name: 'Barrel Run', createdAt: now,
@@ -269,6 +298,18 @@
             { id: 'o12', type: 'steel', x: 320, y: 60, rot: 0, label: 'S2', shots: 1, note: 'Must fall' },
             { id: 'o13', type: 'arrow', x: 205, y: 345, rot: 0, label: '', note: 'Move to Box B around the uprange end of the wall', color: '#ffd43b', dashed: false,
               points: [{ x: 0, y: 0 }, { x: 55, y: 22 }, { x: 135, y: 22 }, { x: 188, y: -5 }] },
+          ],
+        },
+        {
+          id: 'demo-hf', name: 'Steel & Paper', scoring: 'hf', createdAt: now,
+          description: 'Scored by hit factor (USPSA, minor). Start in Box A, wrists above shoulders.\n\nOn the beep, engage T1–T3 with 2 rounds each and S1–S2 until down.',
+          objects: [
+            { id: 'h1', type: 'box', x: 300, y: 330, rot: 0, label: 'A', note: 'Start, wrists above shoulders', w: 40, h: 40 },
+            { id: 'h2', type: 'target', x: 180, y: 110, rot: 20, label: 'T1', shots: 2, note: '2 to the body' },
+            { id: 'h3', type: 'target', x: 300, y: 90, rot: 0, label: 'T2', shots: 2, note: '2 to the body' },
+            { id: 'h4', type: 'target', x: 420, y: 110, rot: 340, label: 'T3', shots: 2, note: '2 to the body' },
+            { id: 'h5', type: 'steel', x: 250, y: 60, rot: 0, label: 'S1', shots: 1, note: 'Must fall' },
+            { id: 'h6', type: 'steel', x: 350, y: 60, rot: 0, label: 'S2', shots: 1, note: 'Must fall' },
           ],
         },
       ],
@@ -293,6 +334,11 @@
         run('demo-moz', 'Failure to Stop', 'drill', 'John', 2.31, d2),
         run('demo-moz', 'Failure to Stop', 'drill', 'John', 2.48, d3, '', { c: 1 }),
         run('demo-stage', 'Barrel Run', 'stage', 'John', 15.88, d2, '', { c: 2 }),
+        run('demo-bill', 'Bill Drill', 'drill', 'Mike', 2.95, d0, 'AR, red dot', {}, 'Rifle'),
+        hfRun('Sarah', 6.12, { a: 6, c: 2 }, d1),
+        hfRun('John', 5.48, { a: 5, c: 2, d: 1 }, d1),
+        hfRun('John', 5.02, { a: 7, c: 1 }, d0),
+        hfRun('Mike', 7.40, { a: 6, c: 1, m: 1 }, d0),
       ],
     };
   }

@@ -56,16 +56,65 @@
   function members() { return Store.all('members').sort((a, b) => a.name.localeCompare(b.name)); }
   function fmtSec(v) { return String(Math.round(Number(v) * 100) / 100); }
   function penaltyTypes(kind) { return Store.PENALTIES.filter(p => kind === 'stage' || !p.stageOnly); }
-  // "1.81 raw + 1C 1M" for runs that had penalties, '' otherwise.
+  /*
+   * Scoring. Drills and most stages are "time plus": lower final time wins. A stage can instead
+   * use USPSA hit factor (points ÷ time): higher wins. Each run records how it was scored
+   * (r.scoring === 'hf' with r.hf, r.points, r.hits), so it always displays correctly.
+   */
+  const HF_HITS = [
+    { key: 'a', label: 'A hits', pts: [5, 5] },
+    { key: 'c', label: 'C hits', pts: [3, 4] },   // [minor, major]
+    { key: 'd', label: 'D hits', pts: [1, 2] },
+    { key: 'm', label: 'Misses', pts: [-10, -10] },
+    { key: 'ns', label: 'No-shoots', pts: [-10, -10] },
+    { key: 'p', label: 'Procedurals', pts: [-10, -10] },
+  ];
+  function modeOf(kind, item) { return kind === 'stage' && item && item.scoring === 'hf' ? 'hf' : 'time'; }
+  function isHF(r) { return r.scoring === 'hf' && typeof r.hf === 'number'; }
+  function scoreOf(r, mode) { return mode === 'hf' ? r.hf : r.time; }
+  function fmtHF(v) { return Number(v).toFixed(4); }
+  function fmtScore(v, mode) { return mode === 'hf' ? fmtHF(v) : fmtTime(v); }
+  function unitOf(mode) { return mode === 'hf' ? ' HF' : 's'; }
+
+  // "1.81 raw + 1C 1M" (time plus) or "48 pts · 11.64s · 12A 2C 1M" (hit factor); '' if nothing to add.
   function penSummary(r) {
+    if (isHF(r)) {
+      const h = r.hits || {};
+      const parts = HF_HITS.filter(x => h[x.key] > 0).map(x => h[x.key] + x.key.toUpperCase());
+      return `${r.points} pts · ${fmtTime(r.time)}s${parts.length ? ' · ' + parts.join(' ') : ''}`;
+    }
     const pen = r.pen || {};
     const parts = Store.PENALTIES.filter(p => pen[p.key] > 0).map(p => pen[p.key] + p.short);
     return parts.length ? `${fmtTime(r.raw)} raw + ${parts.join(' ')}` : '';
   }
   function timeCell(r) {
     const s = penSummary(r);
+    if (isHF(r)) return `<span class="strong">${fmtHF(r.hf)}</span><span class="pen-note hf-note">${esc(s)}</span>`;
     return `<span class="strong">${fmtTime(r.time)}</span>${s ? `<span class="pen-note">${esc(s)}</span>` : ''}`;
   }
+
+  /* Gun type ("division") filter shared by the leaderboards. Runs saved before gun types existed
+     have no division and only show under "All". */
+  const DIV_FILTER_KEY = 'rangelog-div-filter';
+  let divFilter = 'all';
+  try { divFilter = localStorage.getItem(DIV_FILTER_KEY) || 'all'; } catch (e) { /* ignore */ }
+  function byDivision(runs) {
+    if (divFilter === 'all') return runs;
+    return runs.filter(r => (r.division || '') === divFilter);
+  }
+  // Chip row to pick a gun type; hidden until some run has one.
+  function divChipsHTML() {
+    const used = [...new Set(Store.all('times').map(r => r.division).filter(Boolean))];
+    if (!used.length) return '';
+    const order = Store.settings().divisions;
+    used.sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99) || a.localeCompare(b));
+    if (divFilter !== 'all' && !used.includes(divFilter)) used.push(divFilter);
+    return `<div class="chips div-chips"><span class="muted small">Gun:</span>
+      ${['all'].concat(used).map(d => `<button type="button" class="chip${divFilter === d ? ' active' : ''}" data-div-filter="${esc(d)}">${d === 'all' ? 'All' : esc(d)}</button>`).join('')}
+    </div>`;
+  }
+  // Small gun label under a name when the leaderboard mixes gun types.
+  function divNote(r) { return divFilter === 'all' && r.division ? `<span class="sub">${esc(r.division)}</span>` : ''; }
   function svgPoint(svg, e) {
     const pt = svg.createSVGPoint();
     pt.x = e.clientX; pt.y = e.clientY;
@@ -89,16 +138,22 @@
   function itemFor(kind, id) { return Store.get(kind === 'drill' ? 'drills' : 'stages', id); }
   function runsFor(kind, id) { return Store.all('times').filter(t => t.kind === kind && t.itemId === id); }
 
-  // Each shooter's best run, fastest first.
-  function rankRuns(runs) {
+  // Each shooter's best run, best first. Only runs scored the way the item is scored now count
+  // (if a stage switches between time plus and hit factor, the other kind of run isn't comparable).
+  function rankRuns(runs, mode) {
+    mode = mode || 'time';
+    const hf = mode === 'hf';
     const by = new Map();
-    runs.forEach(r => {
+    runs.filter(r => isHF(r) === hf).forEach(r => {
       const k = shooterKey(r.shooter);
       const cur = by.get(k);
       if (!cur) by.set(k, { shooter: r.shooter.trim(), best: r, attempts: 1 });
-      else { cur.attempts++; if (r.time < cur.best.time) cur.best = r; }
+      else {
+        cur.attempts++;
+        if (hf ? r.hf > cur.best.hf : r.time < cur.best.time) cur.best = r;
+      }
     });
-    return [...by.values()].sort((a, b) => a.best.time - b.best.time);
+    return [...by.values()].sort((a, b) => (hf ? b.best.hf - a.best.hf : a.best.time - b.best.time));
   }
 
   /* =========================================================
@@ -120,55 +175,100 @@
       <label class="guest-field" hidden>Guest name <input name="guest" maxlength="60" placeholder="Name"></label>`;
   }
 
-  function recordFormHTML(kind) {
-    const pens = Store.settings().penalties;
-    const types = penaltyTypes(kind).filter(p => pens[p.key] > 0);
+  const GUN_KEY = 'rangelog-division';
+  const PF_KEY = 'rangelog-pf';
+  function getPref(k, def) { try { return localStorage.getItem(k) || def; } catch (e) { return def; } }
+  function setPref(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+
+  function stepperHTML(name, label, sub) {
+    return `<div class="pen">
+      <span class="pen-label">${label}${sub ? `<small>${sub}</small>` : ''}</span>
+      <span class="stepper">
+        <button type="button" class="step" data-pen-step="-1" aria-label="One fewer ${label}">−</button>
+        <input name="${name}" type="number" min="0" max="99" step="1" value="0" inputmode="numeric" aria-label="${label}">
+        <button type="button" class="step" data-pen-step="1" aria-label="One more ${label}">+</button>
+      </span>
+    </div>`;
+  }
+
+  function recordFormHTML(kind, item) {
+    const st = Store.settings();
+    const mode = modeOf(kind, item);
+    const divs = st.divisions;
+    const gun = getPref(GUN_KEY, divs[0] || '');
+    const gunField = divs.length ? `<label>Gun <select name="division">
+        ${divs.map(d => `<option${d === gun ? ' selected' : ''}>${esc(d)}</option>`).join('')}
+      </select></label>` : '';
+
+    let scoring;
+    if (mode === 'hf') {
+      const pf = getPref(PF_KEY, 'minor');
+      const maxPts = item && item.objects ? Stage.rounds(item.objects) * 5 : 0;
+      scoring = `<fieldset class="pen-grid hf-grid"><legend>Hits <span class="muted small">— count steel hits as A</span></legend>
+        ${HF_HITS.map(h => stepperHTML('hit-' + h.key, h.label, h.key === 'a' ? '5 pts' : h.pts[0] < 0 ? '−10 pts' : `${h.pts[0]} pts minor / ${h.pts[1]} major`)).join('')}
+        <div class="pen pf-row"><span class="pen-label">Power factor${maxPts ? `<small>${maxPts} pts possible</small>` : ''}</span>
+          <select name="pf" aria-label="Power factor"><option value="minor"${pf === 'minor' ? ' selected' : ''}>Minor</option><option value="major"${pf === 'major' ? ' selected' : ''}>Major</option></select>
+        </div>
+      </fieldset>`;
+    } else {
+      const types = penaltyTypes(kind).filter(p => st.penalties[p.key] > 0);
+      scoring = types.length ? `<fieldset class="pen-grid"><legend>Penalties <a class="small" href="#/settings">edit values</a></legend>
+        ${types.map(p => stepperHTML('pen-' + p.key, p.label, `+${fmtSec(st.penalties[p.key])}s each`)).join('')}
+      </fieldset>` : '';
+    }
+
     return `<form class="card record-form" id="record-form" autocomplete="off">
-      <h3>⏱ Record a time</h3>
+      <h3>⏱ Record a ${mode === 'hf' ? 'run' : 'time'}${mode === 'hf' ? ' <span class="kind stage">Hit factor</span>' : ''}</h3>
       <div class="form-row">
         <div>${shooterFieldHTML()}</div>
-        <label>Raw time (seconds) <input name="time" class="big-input" type="number" step="0.01" min="0.01" max="3599" inputmode="decimal" enterkeyhint="done" required placeholder="0.00"></label>
+        <label>${mode === 'hf' ? 'Time' : 'Raw time'} (seconds) <input name="time" class="big-input" type="number" step="0.01" min="0.01" max="3599" inputmode="decimal" enterkeyhint="done" required placeholder="0.00"></label>
       </div>
-      ${types.length ? `<fieldset class="pen-grid"><legend>Penalties <a class="small" href="#/settings">edit values</a></legend>
-        ${types.map(p => `<div class="pen">
-          <span class="pen-label">${p.label}<small>+${fmtSec(pens[p.key])}s each</small></span>
-          <span class="stepper">
-            <button type="button" class="step" data-pen-step="-1" aria-label="One fewer">−</button>
-            <input name="pen-${p.key}" type="number" min="0" max="99" step="1" value="0" inputmode="numeric" aria-label="${p.label}">
-            <button type="button" class="step" data-pen-step="1" aria-label="One more">+</button>
-          </span>
-        </div>`).join('')}
-      </fieldset>` : ''}
+      ${gunField ? `<div class="form-row">${gunField}<div></div></div>` : ''}
+      ${scoring}
       <div class="form-row">
         <label>Date <input name="date" type="date" required value="${today()}"></label>
         <label>Notes <input name="notes" maxlength="200" placeholder="Optional"></label>
       </div>
       <div class="final-line" id="final-line"></div>
-      <button class="btn primary block" type="submit">Save time</button>
+      <button class="btn primary block" type="submit">Save ${mode === 'hf' ? 'run' : 'time'}</button>
     </form>`;
   }
 
-  function bindRecordForm(kind, getItem) {
+  // onSaved(run) lets a page react after a save (the Record screen moves to the next shooter).
+  function bindRecordForm(kind, getItem, onSaved) {
     const form = $('#record-form');
     const f = form.elements;
     const sel = f.member;
+    const hfMode = () => modeOf(kind, getItem()) === 'hf';
 
-    function calc() {
-      const pens = Store.settings().penalties;
-      const raw = num(f.time.value);
-      const pen = {};
-      let penTime = 0;
-      $$('input[name^="pen-"]', form).forEach(inp => {
-        const k = inp.name.slice(4);
+    function counts(prefix) {
+      const out = {};
+      $$(`input[name^="${prefix}"]`, form).forEach(inp => {
         const n = Math.max(0, parseInt(inp.value, 10) || 0);
-        if (n) { pen[k] = n; penTime += n * (pens[k] || 0); }
+        if (n) out[inp.name.slice(prefix.length)] = n;
       });
-      penTime = round2(penTime);
+      return out;
+    }
+    function calc() {
+      const raw = num(f.time.value);
+      if (hfMode()) {
+        const hits = counts('hit-');
+        const major = f.pf && f.pf.value === 'major';
+        const points = Math.max(0, HF_HITS.reduce((sum, h) => sum + (hits[h.key] || 0) * h.pts[major ? 1 : 0], 0));
+        return { raw, hits, pf: major ? 'major' : 'minor', points, hf: raw ? Math.round(points / raw * 10000) / 10000 : null };
+      }
+      const pens = Store.settings().penalties;
+      const pen = counts('pen-');
+      const penTime = round2(Object.keys(pen).reduce((sum, k) => sum + pen[k] * (pens[k] || 0), 0));
       return { raw, pen, penTime, final: raw ? round2(raw + penTime) : null };
     }
     function showFinal() {
       const c = calc();
       const el = $('#final-line');
+      if (hfMode()) {
+        el.innerHTML = `Points: <strong>${c.points}</strong>${c.hf !== null ? ` · Hit factor: <strong>${fmtHF(c.hf)}</strong>` : ''}`;
+        return;
+      }
       if (!c.raw) { el.innerHTML = c.penTime ? `Penalties: <strong>+${fmtTime(c.penTime)}s</strong>` : ''; return; }
       el.innerHTML = `Final time: <strong>${fmtTime(c.final)}s</strong>${c.penTime ? ` <span class="muted">(${fmtTime(c.raw)} raw + ${fmtTime(c.penTime)} penalties)</span>` : ''}`;
     }
@@ -181,12 +281,14 @@
       showFinal();
     });
     form.addEventListener('input', showFinal);
+    form.addEventListener('change', showFinal);
     if (sel) sel.addEventListener('change', () => {
       const guest = sel.value === '__guest';
       $('.guest-field', form).hidden = !guest;
       f.guest.required = guest;
       if (guest) f.guest.focus();
     });
+    showFinal();
 
     form.addEventListener('submit', e => {
       e.preventDefault();
@@ -203,37 +305,53 @@
       const c = calc();
       if (!item || !shooter || !c.raw || c.raw <= 0) return;
       setShooter(shooter);
-      const par = kind === 'drill' ? num(item.par) : null;
-      Store.add('times', {
-        kind, itemId: item.id, itemName: item.name, par, shooter, memberId,
-        raw: round2(c.raw), pen: c.pen, penTime: c.penTime, time: c.final,
+      const division = f.division ? f.division.value : '';
+      if (division) setPref(GUN_KEY, division);
+      const base = {
+        kind, itemId: item.id, itemName: item.name, shooter, memberId, division: division || null,
         date: f.date.value || today(), notes: f.notes.value.trim(),
-      });
+      };
+      let run;
+      if (hfMode()) {
+        setPref(PF_KEY, c.pf);
+        run = Object.assign(base, { scoring: 'hf', par: null, raw: round2(c.raw), time: round2(c.raw), hits: c.hits, pf: c.pf, points: c.points, hf: c.hf });
+      } else {
+        run = Object.assign(base, { par: kind === 'drill' ? num(item.par) : null, raw: round2(c.raw), pen: c.pen, penTime: c.penTime, time: c.final });
+      }
+      Store.add('times', run);
       f.time.value = '';
       f.notes.value = '';
-      $$('input[name^="pen-"]', form).forEach(inp => { inp.value = 0; });
+      $$('input[name^="pen-"], input[name^="hit-"]', form).forEach(inp => { inp.value = 0; });
       showFinal();
-      const pens = c.penTime ? ` incl. +${fmtTime(c.penTime)} penalties` : '';
-      if (par) toast(c.final <= par ? `${fmtTime(c.final)}s${pens} — under par! 🎯` : `${fmtTime(c.final)}s${pens} (+${fmtTime(c.final - par)} over par)`);
-      else toast(`${fmtTime(c.final)}s saved${pens}`);
+      if (run.scoring === 'hf') toast(`${shooter}: HF ${fmtHF(run.hf)} (${run.points} pts / ${fmtTime(run.time)}s)`);
+      else {
+        const par = run.par;
+        const pens = run.penTime ? ` incl. +${fmtTime(run.penTime)} penalties` : '';
+        if (par) toast(run.time <= par ? `${fmtTime(run.time)}s${pens} — under par! 🎯` : `${fmtTime(run.time)}s${pens} (+${fmtTime(run.time - par)} over par)`);
+        else toast(`${fmtTime(run.time)}s saved${pens}`);
+      }
+      if (onSaved) onSaved(run);
     });
   }
 
   function historyHTML(kind, id, par) {
-    const runs = runsFor(kind, id);
+    const mode = modeOf(kind, itemFor(kind, id));
+    const runs = byDivision(runsFor(kind, id));
+    const chips = divChipsHTML();
     if (!runs.length) {
-      return `<div class="card"><h3>Times</h3><p class="muted">No times recorded yet. Be the first!</p></div>`;
+      return `${chips}<div class="card"><h3>Times</h3><p class="muted">No times recorded yet${divFilter !== 'all' ? ' for this gun' : ''}. Be the first!</p></div>`;
     }
-    const ranked = rankRuns(runs).slice(0, 10);
+    const ranked = rankRuns(runs, mode).slice(0, 10);
     const recent = runs.slice().sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
     const parCol = par ? '<th class="num">vs Par</th>' : '';
-    return `<div class="two-col even">
+    return `${chips}<div class="two-col even">
       <div class="card">
         <h3>🏆 All-time leaderboard</h3>
-        <p class="muted small">Each shooter's best run</p>
-        <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">Time</th>${parCol}<th>Date</th></tr></thead><tbody>
+        <p class="muted small">Each shooter's best run${mode === 'hf' ? ' (by hit factor, higher is better)' : ''}</p>
+        ${ranked.length ? '' : '<p class="muted">No runs scored this way yet.</p>'}
+        <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">${mode === 'hf' ? 'HF' : 'Time'}</th>${parCol}<th>Date</th></tr></thead><tbody>
         ${ranked.map((r, i) => `<tr>
-          <td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}</td>
+          <td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}${divNote(r.best)}</td>
           <td class="num">${timeCell(r.best)}</td>
           ${par ? `<td class="num">${vsPar(r.best.time, par)}</td>` : ''}
           <td><a href="#/day/${r.best.date}">${fmtShort(r.best.date)}</a></td></tr>`).join('')}
@@ -243,9 +361,9 @@
         <h3>All runs <span class="count">${runs.length}</span></h3>
         <div class="scroll"><table class="table"><thead><tr><th>Date</th><th>Shooter</th><th class="num">Time</th>${parCol}<th></th></tr></thead><tbody>
         ${recent.map(r => `<tr>
-          <td><a href="#/day/${r.date}">${fmtShort(r.date)}</a></td><td>${shooterLink(r.shooter, r.memberId)}${r.notes ? `<span class="sub">${esc(r.notes)}</span>` : ''}</td>
+          <td><a href="#/day/${r.date}">${fmtShort(r.date)}</a></td><td>${shooterLink(r.shooter, r.memberId)}${divNote(r)}${r.notes ? `<span class="sub">${esc(r.notes)}</span>` : ''}</td>
           <td class="num">${timeCell(r)}</td>
-          ${par ? `<td class="num">${vsPar(r.time, par)}</td>` : ''}
+          ${par ? `<td class="num">${isHF(r) ? '' : vsPar(r.time, par)}</td>` : ''}
           <td><button class="icon-btn" data-del-time="${esc(r.id)}" title="Delete this run" aria-label="Delete this run">×</button></td></tr>`).join('')}
         </tbody></table></div>
       </div>
@@ -259,7 +377,7 @@
     const date = (m && m[1]) || today();
     const render = () => {
       const all = Store.all('times');
-      const runs = all.filter(t => t.date === date);
+      const runs = byDivision(all.filter(t => t.date === date));
       const dates = [...new Set(all.map(t => t.date))].sort().reverse();
 
       const groups = new Map();
@@ -271,13 +389,14 @@
       const results = [...groups.values()].map(list => {
         const r0 = list[0];
         const item = itemFor(r0.kind, r0.itemId);
+        const mode = modeOf(r0.kind, item);
         return {
-          kind: r0.kind, id: r0.itemId, exists: !!item,
+          kind: r0.kind, id: r0.itemId, exists: !!item, mode,
           name: item ? item.name : r0.itemName,
           par: r0.kind === 'drill' ? num(item ? item.par : r0.par) : null,
-          ranked: rankRuns(list), count: list.length,
+          ranked: rankRuns(list, mode), count: list.length,
         };
-      }).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'drill' ? -1 : 1) || a.name.localeCompare(b.name));
+      }).filter(g => g.ranked.length).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'drill' ? -1 : 1) || a.name.localeCompare(b.name));
 
       const wins = new Map();
       results.forEach(g => {
@@ -301,8 +420,11 @@
             ${date !== today() ? '<a class="btn" href="#/">Today</a>' : ''}
           </div>
         </div>
+        ${date === today() ? rangeDayCardHTML() : ''}
+        <div class="day-links"><a class="btn sm" href="#/standings">🏆 Season standings</a><a class="btn sm" href="#/plan">📋 Range day plan</a></div>
         ${dates.length ? `<div class="chips"><span class="muted small">Range days:</span>${dates.slice(0, 12).map(d =>
           `<a class="chip${d === date ? ' active' : ''}" href="#/day/${d}">${fmtDate(d)}</a>`).join('')}</div>` : ''}
+        ${divChipsHTML()}
         ${runs.length ? `
           <div class="stats-row">
             <div class="stat-card"><span class="value">${shooters.size}</span><span class="label">Shooters</span></div>
@@ -310,7 +432,7 @@
             <div class="stat-card"><span class="value">${results.length}</span><span class="label">Drills &amp; stages</span></div>
             <div class="stat-card gold"><span class="value">🏆 ${esc(leaders.join(' & '))}</span><span class="label">Most wins today (${maxWins})</span></div>
           </div>
-          <h2 class="section-title">Fastest of the day</h2>
+          <h2 class="section-title">Best of the day</h2>
           <div class="grid winners">${results.map(winnerCard).join('')}</div>
           <h2 class="section-title">Full results</h2>
           <div class="grid results">${results.map(resultCard).join('')}</div>`
@@ -333,7 +455,7 @@
       <h3>${esc(g.name)}</h3>
       <div class="winner">
         <span class="trophy">🏆</span>
-        <div><div class="who">${esc(w.shooter)}</div><div class="time">${fmtTime(w.best.time)}<small>s</small></div>${w.best.penTime ? `<div class="pen-note">incl. +${fmtTime(w.best.penTime)} penalties</div>` : ''}</div>
+        <div><div class="who">${esc(w.shooter)}</div><div class="time">${fmtScore(scoreOf(w.best, g.mode), g.mode)}<small>${unitOf(g.mode)}</small></div>${g.mode === 'hf' ? `<div class="pen-note hf-note">${esc(penSummary(w.best))}</div>` : w.best.penTime ? `<div class="pen-note">incl. +${fmtTime(w.best.penTime)} penalties</div>` : ''}${divNote(w.best)}</div>
       </div>
       ${g.par ? `<div class="par-line">Par ${fmtTime(g.par)}s · ${vsPar(w.best.time, g.par)}</div>` : `<div class="par-line">${g.ranked.length} shooter${g.ranked.length === 1 ? '' : 's'}</div>`}
     </${tag}>`;
@@ -346,9 +468,10 @@
         <span class="kind ${g.kind}">${g.kind === 'drill' ? 'Drill' : 'Stage'}</span>
       </div>
       ${g.par ? `<p class="muted small">Par ${fmtTime(g.par)}s</p>` : ''}
-      <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">Best</th>${g.par ? '<th class="num">vs Par</th>' : ''}<th class="num">Runs</th></tr></thead><tbody>
+      ${g.mode === 'hf' ? '<p class="muted small">Hit factor · higher is better</p>' : ''}
+      <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">${g.mode === 'hf' ? 'Best HF' : 'Best'}</th>${g.par ? '<th class="num">vs Par</th>' : ''}<th class="num">Runs</th></tr></thead><tbody>
       ${g.ranked.map((r, i) => `<tr${i === 0 ? ' class="first"' : ''}>
-        <td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}</td>
+        <td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}${divNote(r.best)}</td>
         <td class="num">${timeCell(r.best)}</td>
         ${g.par ? `<td class="num">${vsPar(r.best.time, g.par)}</td>` : ''}
         <td class="num muted">${r.attempts}</td></tr>`).join('')}
@@ -410,7 +533,7 @@
     const render = () => {
       const drills = Store.all('drills').sort((a, b) => a.name.localeCompare(b.name));
       app.innerHTML = `
-        <div class="page-head"><div><p class="eyebrow">Drills</p><h1>Drills &amp; par times</h1></div><a class="btn primary" href="#/drills/new">+ New drill</a></div>
+        <div class="page-head"><div><p class="eyebrow">Drills</p><h1>Drills &amp; par times</h1></div><div class="actions"><a class="btn" href="#/timer">⏲ Dry fire timer</a><a class="btn primary" href="#/drills/new">+ New drill</a></div></div>
         ${drills.length ? `<div class="grid items">${drills.map(d => {
           const best = rankRuns(runsFor('drill', d.id))[0];
           return `<a class="card item-card" href="#/drills/${esc(d.id)}">
@@ -445,19 +568,19 @@
       <a class="back" href="#/drills">← All drills</a>
       <div class="page-head">
         <div><p class="eyebrow">Drill</p><h1>${esc(d.name)}</h1></div>
-        <div class="actions"><button class="btn primary mobile-only" type="button" data-jump-record>⏱ Record time</button><a class="btn" href="#/drills/${esc(id)}/edit">Edit</a><button class="btn danger-outline" id="del-item">Delete</button></div>
+        <div class="actions"><button class="btn primary mobile-only" type="button" data-jump-record>⏱ Record time</button><a class="btn" href="#/timer/drill:${esc(id)}">⏲ Dry fire timer</a><a class="btn" href="#/drills/${esc(id)}/edit">Edit</a><button class="btn danger-outline" id="del-item">Delete</button></div>
       </div>
       ${multi ? `
       <div class="card target-card multi">${targetsHTML(d, { numbers: true })}
         <p class="hint center">Numbers show the shot order across targets.</p></div>
       <div class="two-col even">
         <div class="stack">${details}</div>
-        ${recordFormHTML('drill')}
+        ${recordFormHTML('drill', d)}
       </div>` : `
       <div class="two-col">
         <div class="card target-card">${targetsHTML(d, { numbers: true })}</div>
         <div class="stack">${details}
-          ${recordFormHTML('drill')}
+          ${recordFormHTML('drill', d)}
         </div>
       </div>`}
       <div id="times-section"></div>`;
@@ -618,14 +741,14 @@
         <div class="page-head"><div><p class="eyebrow">Stages</p><h1>Stages</h1></div><a class="btn primary" href="#/stages/new">+ New stage</a></div>
         ${stages.length ? `<div class="grid items wide">${stages.map(s => {
           const objs = s.objects || [];
-          const best = rankRuns(runsFor('stage', s.id))[0];
+          const best = rankRuns(runsFor('stage', s.id), modeOf('stage', s))[0];
           const targets = objs.filter(o => o.type === 'target' || o.type === 'steel').length;
           return `<a class="card item-card stage-card" href="#/stages/${esc(s.id)}">
             <div class="thumb">${Stage.svg(objs)}</div>
             <div class="item-body">
               <h3>${esc(s.name)}</h3>
               <div class="meta"><span class="pill">${Stage.rounds(objs)} rds min</span><span>${targets} target${targets === 1 ? '' : 's'}</span></div>
-              <div class="best">${best ? `🏆 ${fmtTime(best.best.time)}s — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
+              <div class="best">${best ? `🏆 ${fmtScore(scoreOf(best.best, modeOf('stage', s)), modeOf('stage', s))}${unitOf(modeOf('stage', s))} — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
             </div>
           </a>`;
         }).join('')}</div>`
@@ -669,6 +792,8 @@
             <div class="stat-card"><span class="value">${shootable.length}</span><span class="label">Targets</span></div>
             <div class="stat-card"><span class="value">${noShoots}</span><span class="label">No-shoots</span></div>
           </div>
+          <div class="scoring-note">${s.scoring === 'hf' ? '🎯 Scored by <b>hit factor</b> (USPSA): points ÷ time, highest wins.' : '⏱ Scored by <b>time plus</b>: raw time + penalties, fastest wins.'}
+          </div>
           <div class="card"><h3>Stage procedure</h3><div class="instructions">${s.description ? nl2br(s.description) : '<em class="muted">No procedure written.</em>'}</div></div>
           ${shootable.length ? `<div class="card"><h3>Targets</h3>
             <table class="table target-table" id="target-table"><thead><tr><th>Target</th><th class="num">Shots</th><th>Where to shoot</th></tr></thead><tbody>
@@ -676,7 +801,7 @@
             </tbody></table></div>` : ''}
           ${boxes.some(b => b.note) || hasMoving ? `<div class="card"><h3>Shooting positions</h3><ul class="plain">
             ${boxes.filter(b => b.note || Stage.boxKind(b) === 'moving').map(b => `<li>${boxTag(b)} ${Stage.boxKind(b) === 'moving' ? '<strong>Shooting on the move.</strong> ' : ''}${esc(b.note)}</li>`).join('')}</ul></div>` : ''}
-          ${recordFormHTML('stage')}
+          ${recordFormHTML('stage', s)}
         </div>
       </div>
       <div id="times-section"></div>`;
@@ -744,6 +869,11 @@
       <form id="stage-form" class="card" autocomplete="off">
         <label>Stage name <input name="name" required maxlength="80" value="${esc(s.name)}" placeholder="e.g. Barrel Run"></label>
         <label>Stage procedure <textarea name="description" rows="4" placeholder="Start position, ready condition, what to engage from where…">${esc(s.description)}</textarea></label>
+        <label>Scoring <select name="scoring">
+          <option value="time"${s.scoring === 'hf' ? '' : ' selected'}>Time plus (fastest final time wins)</option>
+          <option value="hf"${s.scoring === 'hf' ? ' selected' : ''}>Hit factor, USPSA (points ÷ time, highest wins)</option>
+        </select></label>
+        <p class="hint">Changing scoring later only changes how runs are ranked: runs scored the other way stay in the history but aren't compared.</p>
       </form>
       <div class="palette card">
         <span class="palette-title">Add:</span>
@@ -966,7 +1096,7 @@
       e.preventDefault();
       const name = form.elements.name.value.trim();
       if (!name) return;
-      const data = { name, description: form.elements.description.value.trim(), objects: s.objects };
+      const data = { name, description: form.elements.description.value.trim(), objects: s.objects, scoring: form.elements.scoring.value === 'hf' ? 'hf' : 'time' };
       let newId = id;
       if (existing) Store.update('stages', id, data);
       else newId = Store.add('stages', data);
@@ -984,6 +1114,20 @@
    * ======================================================= */
   const ITEM_KEY = 'rangelog-last-item';
 
+  function itemOfValue(v) {
+    const i = String(v || '').indexOf(':');
+    const kind = String(v).slice(0, i), id = String(v).slice(i + 1);
+    return { kind, id, item: i > 0 ? itemFor(kind, id) : null };
+  }
+  // Today's range-day plan, if one is set for today and has items that still exist.
+  function todaysPlan() {
+    const rd = Store.settings().rangeDay;
+    if (!rd || rd.date !== today()) return null;
+    const items = (rd.items || []).filter(v => itemOfValue(v).item);
+    const shooters = (rd.shooters || []).filter(id => Store.get('members', id));
+    return items.length || shooters.length ? Object.assign({}, rd, { items, shooters }) : null;
+  }
+
   function renderRecord(m) {
     const byName = (a, b) => a.name.localeCompare(b.name);
     const drills = Store.all('drills').sort(byName);
@@ -995,62 +1139,124 @@
       return;
     }
 
-    const itemOf = v => {
-      const i = String(v || '').indexOf(':');
-      const kind = String(v).slice(0, i), id = String(v).slice(i + 1);
-      return { kind, id, item: i > 0 ? itemFor(kind, id) : null };
-    };
+    const plan = todaysPlan();
+    const planItems = plan ? plan.items : [];
     let saved = '';
     try { saved = localStorage.getItem(ITEM_KEY) || ''; } catch (e) { /* ignore */ }
-    let current = [m && m[1], saved].find(v => v && itemOf(v).item)
-      || (drills.length ? 'drill:' + drills[0].id : 'stage:' + stages[0].id);
+    let current = [m && m[1], planItems.length && !planItems.includes(saved) ? planItems[0] : saved].find(v => v && itemOfValue(v).item)
+      || planItems[0] || (drills.length ? 'drill:' + drills[0].id : 'stage:' + stages[0].id);
 
+    const opt = (v, name) => `<option value="${esc(v)}">${esc(name)}</option>`;
     app.innerHTML = `
-      <div class="page-head"><div><p class="eyebrow">Record</p><h1>Record times</h1></div></div>
+      <div class="page-head"><div><p class="eyebrow">Record</p><h1>Record times</h1></div>
+        <a class="btn sm" href="#/plan">📋 ${plan ? "Today's plan" : 'Plan a range day'}</a></div>
       <div class="record-page">
         <div class="card pick-card">
           <label>Drill or stage
             <select id="item-pick">
-              ${drills.length ? `<optgroup label="Drills">${drills.map(d => `<option value="drill:${esc(d.id)}">${esc(d.name)}</option>`).join('')}</optgroup>` : ''}
-              ${stages.length ? `<optgroup label="Stages">${stages.map(st => `<option value="stage:${esc(st.id)}">${esc(st.name)}</option>`).join('')}</optgroup>` : ''}
+              ${planItems.length ? `<optgroup label="Today's plan">${planItems.map((v, i) => opt(v, `${i + 1}. ${itemOfValue(v).item.name}`)).join('')}</optgroup>` : ''}
+              ${drills.filter(d => !planItems.includes('drill:' + d.id)).length ? `<optgroup label="Drills">${drills.filter(d => !planItems.includes('drill:' + d.id)).map(d => opt('drill:' + d.id, d.name)).join('')}</optgroup>` : ''}
+              ${stages.filter(st => !planItems.includes('stage:' + st.id)).length ? `<optgroup label="Stages">${stages.filter(st => !planItems.includes('stage:' + st.id)).map(st => opt('stage:' + st.id, st.name)).join('')}</optgroup>` : ''}
             </select>
           </label>
           <div class="item-info" id="item-info"></div>
+          <div id="plan-slot"></div>
         </div>
         <div id="record-slot"></div>
         <div id="today-slot"></div>
       </div>`;
 
+    // Has this member shot the current item today?
+    function shotToday(memberId) {
+      const { kind, id } = itemOfValue(current);
+      const mem = Store.get('members', memberId);
+      return runsFor(kind, id).some(r => r.date === today() && (r.memberId === memberId || (!r.memberId && mem && shooterKey(r.shooter) === shooterKey(mem.name))));
+    }
+    function selectShooter(memberId) {
+      const sel = $('#record-form select[name="member"]');
+      if (!sel || !memberId) return;
+      sel.value = memberId;
+      sel.dispatchEvent(new Event('change'));
+      drawPlan();
+    }
+
+    // Plan progress and the shooting order (tap a name to pick them).
+    function drawPlan() {
+      const slot = $('#plan-slot');
+      if (!plan) { slot.innerHTML = ''; return; }
+      const idx = planItems.indexOf(current);
+      const nextItem = idx >= 0 && idx < planItems.length - 1 ? planItems[idx + 1] : null;
+      const sel = $('#record-form select[name="member"]');
+      const doneCount = plan.shooters.filter(shotToday).length;
+      slot.innerHTML = `<div class="plan-box">
+        ${idx >= 0 ? `<div class="plan-nav"><span>📋 Plan: ${idx + 1} of ${planItems.length}</span>
+          ${nextItem ? `<button type="button" class="btn sm${plan.shooters.length && doneCount === plan.shooters.length ? ' primary' : ''}" id="plan-next">Next: ${esc(itemOfValue(nextItem).item.name)} ›</button>` : '<span class="muted small">Last item in the plan</span>'}</div>` : ''}
+        ${plan.shooters.length ? `<div class="order"><span class="muted small">Shooting order · ${doneCount} of ${plan.shooters.length} done</span>
+          <div class="order-chips">${plan.shooters.map((mid, i) => {
+            const mem = Store.get('members', mid);
+            const done = shotToday(mid);
+            return `<button type="button" class="chip order-chip${done ? ' done' : ''}${sel && sel.value === mid ? ' active' : ''}" data-order="${esc(mid)}">${done ? '✓' : i + 1 + '.'} ${esc(mem.name)}</button>`;
+          }).join('')}</div></div>` : ''}
+      </div>`;
+      const nb = $('#plan-next');
+      if (nb) nb.addEventListener('click', () => { pick.value = nextItem; pick.dispatchEvent(new Event('change')); });
+      $$('[data-order]', slot).forEach(b => b.addEventListener('click', () => selectShooter(b.dataset.order)));
+    }
+
+    // After a save, move on to the next shooter in the order who hasn't shot this item yet.
+    function afterSave(run) {
+      if (!plan || !plan.shooters.length) return;
+      const order = plan.shooters;
+      const from = order.indexOf(run.memberId);
+      for (let k = 1; k <= order.length; k++) {
+        const mid = order[(from + k + order.length) % order.length];
+        if (!shotToday(mid)) { selectShooter(mid); return; }
+      }
+      const idx = planItems.indexOf(current);
+      const nextItem = idx >= 0 && idx < planItems.length - 1 ? planItems[idx + 1] : null;
+      toast(nextItem ? `Everyone has shot this one. Next up: ${itemOfValue(nextItem).item.name}` : 'Everyone has shot this one. 🎉');
+      drawPlan();
+    }
+
     function mountForm() {
-      const { kind, id, item } = itemOf(current);
+      const { kind, id, item } = itemOfValue(current);
       $('#item-info').innerHTML = kind === 'drill'
         ? `<span class="pill">Par ${fmtTime(item.par)}s</span>${item.rounds ? `<span>${esc(item.rounds)} rds</span>` : ''}${distanceText(item) ? `<span>${distanceText(item)}</span>` : ''}<a href="#/drills/${esc(id)}">View drill →</a>`
-        : `<span class="pill">${Stage.rounds(item.objects)} rds min</span><a href="#/stages/${esc(id)}">View stage →</a>`;
-      $('#record-slot').innerHTML = recordFormHTML(kind);
-      bindRecordForm(kind, () => itemFor(kind, id));
+        : `<span class="pill">${Stage.rounds(item.objects)} rds min</span>${item.scoring === 'hf' ? '<span class="pill">Hit factor</span>' : ''}<a href="#/stages/${esc(id)}">View stage →</a>`;
+      $('#record-slot').innerHTML = recordFormHTML(kind, item);
+      bindRecordForm(kind, () => itemFor(kind, id), afterSave);
+      const sel = $('#record-form select[name="member"]');
+      if (sel) sel.addEventListener('change', drawPlan);
+      if (plan && plan.shooters.length) {
+        const first = plan.shooters.find(mid => !shotToday(mid));
+        if (first) selectShooter(first);
+      }
+      drawPlan();
       drawToday();
     }
 
     // Today's results for the picked item, plus the latest entries so mistakes are easy to spot and delete.
     function drawToday() {
-      const { kind, id, item } = itemOf(current);
+      const { kind, id, item } = itemOfValue(current);
       if (!item) return;
       const runs = runsFor(kind, id).filter(r => r.date === today());
-      const ranked = rankRuns(runs);
+      const mode = modeOf(kind, item);
+      const ranked = rankRuns(runs, mode);
       const par = kind === 'drill' ? num(item.par) : null;
       const latest = runs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 5);
       $('#today-slot').innerHTML = `<div class="card">
         <h3>Today · ${esc(item.name)} <span class="count">${runs.length}</span></h3>
         ${ranked.length ? `
-          <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">Best</th>${par ? '<th class="num">vs Par</th>' : ''}<th class="num">Runs</th></tr></thead><tbody>
-          ${ranked.map((r, i) => `<tr${i === 0 ? ' class="first"' : ''}><td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}</td>
+          <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">${mode === 'hf' ? 'Best HF' : 'Best'}</th>${par ? '<th class="num">vs Par</th>' : ''}<th class="num">Runs</th></tr></thead><tbody>
+          ${ranked.map((r, i) => `<tr${i === 0 ? ' class="first"' : ''}><td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}${divNote(r.best)}</td>
             <td class="num">${timeCell(r.best)}</td>${par ? `<td class="num">${vsPar(r.best.time, par)}</td>` : ''}<td class="num muted">${r.attempts}</td></tr>`).join('')}
-          </tbody></table>
+          </tbody></table>` : ''}
+        ${latest.length ? `
           <h4 class="mini-title">Latest entries</h4>
           <ul class="entry-list">${latest.map(r => `<li>
             <span class="who">${esc(r.shooter)}</span>
             <span class="t">${timeCell(r)}</span>
-            <button class="icon-btn" data-del-time="${esc(r.id)}" title="Delete this run" aria-label="Delete ${esc(r.shooter)}'s ${fmtTime(r.time)} run">×</button>
+            <button class="icon-btn" data-del-time="${esc(r.id)}" title="Delete this run" aria-label="Delete ${esc(r.shooter)}'s run">×</button>
           </li>`).join('')}</ul>`
         : '<p class="muted">No times recorded today yet.</p>'}
       </div>`;
@@ -1064,7 +1270,7 @@
       mountForm();
     });
     mountForm();
-    pageRefresh = () => { if (itemOf(current).item) drawToday(); else renderRecord(); };
+    pageRefresh = () => { if (itemOfValue(current).item) { drawToday(); drawPlan(); } else renderRecord(); };
   }
 
   /* =========================================================
@@ -1086,13 +1292,17 @@
 
   // Line chart of a shooter's best time per range day, with an optional par line.
   // Single series, so no legend; hover/tap shows the day's details.
-  function drawTrend(el, sessions, par) {
+  // Line chart of a shooter's best score per range day, with optional par and goal lines.
+  // mode 'time': lower is better, the PB is the lowest point. mode 'hf': higher is better.
+  // Single series, so no legend; hover/tap shows the day's details.
+  function drawTrend(el, sessions, par, mode, goal) {
+    const hf = mode === 'hf';
     const W = Math.max(260, el.clientWidth), H = 180;
-    const pad = { l: 40, r: 16, t: 22, b: 26 };
+    const pad = { l: 44, r: 16, t: 22, b: 26 };
     const xs = sessions.map(s => parseISO(s.date).getTime());
     let x0 = Math.min(...xs), x1 = Math.max(...xs);
     if (x0 === x1) { x0 -= 864e5; x1 += 864e5; }
-    const vals = sessions.map(s => s.best).concat(par ? [par] : []);
+    const vals = sessions.map(s => s.best).concat(par ? [par] : [], goal ? [goal] : []);
     let lo = Math.min(...vals), hi = Math.max(...vals);
     const span = (hi - lo) || hi * 0.2 || 1;
     lo = Math.max(0, lo - span * 0.2);
@@ -1104,15 +1314,16 @@
     const X = t => pad.l + (t - x0) / (x1 - x0) * (W - pad.l - pad.r);
     const Y = v => pad.t + (hi - v) / (hi - lo) * (H - pad.t - pad.b);
     const pts = sessions.map((s, i) => ({ x: X(xs[i]), y: Y(s.best), s }));
-    const pb = pts.reduce((a, b) => (b.s.best < a.s.best ? b : a));
+    const pb = pts.reduce((a, b) => ((hf ? b.s.best > a.s.best : b.s.best < a.s.best) ? b : a));
     const pbAnchor = pb.x > W - 60 ? 'end' : pb.x < pad.l + 30 ? 'start' : 'middle';
-    // The PB is the lowest point, so the space under it is always clear of the line.
-    const pbY = pb.y + 18;
+    // The PB is the lowest point (time) or highest (HF), so the space beyond it is clear of the line.
+    const pbY = hf ? pb.y - 10 : pb.y + 18;
+    const fmt = v => fmtScore(v, mode);
     const dateLabel = d => parseISO(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const first = sessions[0], last = sessions[sessions.length - 1];
 
     el.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
-        aria-label="Best time per range day, ${sessions.length} days, personal best ${fmtTime(pb.s.best)} seconds">
+        aria-label="Best ${hf ? 'hit factor' : 'time'} per range day, ${sessions.length} days, personal best ${fmt(pb.s.best)}">
       <g class="grid">${ticks.map(v => `<line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(v)}" y2="${Y(v)}"/>`).join('')}</g>
       <g class="axis">${ticks.map(v => `<text x="${pad.l - 8}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(dec)}</text>`).join('')}
         <text x="${pts[0].x}" y="${H - 6}" text-anchor="${sessions.length > 1 ? 'start' : 'middle'}">${dateLabel(first.date)}</text>
@@ -1120,24 +1331,24 @@
       </g>
       ${par ? `<line class="par-line" x1="${pad.l}" x2="${W - pad.r}" y1="${Y(par)}" y2="${Y(par)}"/>
         <text class="par-label" x="${W - pad.r}" y="${Y(par) - 5}" text-anchor="end">Par ${fmtTime(par)}</text>` : ''}
+      ${goal ? `<line class="goal-line" x1="${pad.l}" x2="${W - pad.r}" y1="${Y(goal)}" y2="${Y(goal)}"/>
+        <text class="goal-label" x="${pad.l + 4}" y="${Y(goal) - 5}" text-anchor="start">Goal ${fmt(goal)}</text>` : ''}
       <path class="trend-line" d="${pts.map((p, i) => (i ? 'L' : 'M') + p.x + ',' + p.y).join(' ')}"/>
       <line class="crosshair" y1="${pad.t}" y2="${H - pad.b}" visibility="hidden"/>
       ${pts.map((p, i) => `<circle class="trend-dot${p === pb ? ' pb' : ''}" data-i="${i}" cx="${p.x}" cy="${p.y}" r="${p === pb ? 5.5 : 4}"/>`).join('')}
-      <text class="pb-label" x="${pb.x}" y="${pbY}" text-anchor="${pbAnchor}">PB ${fmtTime(pb.s.best)}</text>
+      <text class="pb-label" x="${pb.x}" y="${pbY}" text-anchor="${pbAnchor}">PB ${fmt(pb.s.best)}</text>
       <rect class="hover-zone" x="${pad.l - 10}" y="0" width="${W - pad.l - pad.r + 20}" height="${H}"/>
     </svg><div class="chart-tip" hidden></div>`;
 
     const svg = $('svg', el), tip = $('.chart-tip', el), cross = $('.crosshair', el);
 
-    // If the par label lands on the PB label, move it to the left end of the par line.
-    const parLabel = $('.par-label', el), pbLabel = $('.pb-label', el);
-    if (parLabel) {
-      const a = parLabel.getBBox(), b = pbLabel.getBBox();
-      if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
-        parLabel.setAttribute('x', pad.l + 4);
-        parLabel.setAttribute('text-anchor', 'start');
-      }
-    }
+    // Keep reference-line labels off the PB label: move a colliding label to the other end of its line.
+    const pbBox = $('.pb-label', el).getBBox();
+    const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    [['.par-label', pad.l + 4, 'start'], ['.goal-label', W - pad.r, 'end']].forEach(([sel, x, anchor]) => {
+      const lbl = $(sel, el);
+      if (lbl && overlaps(lbl.getBBox(), pbBox)) { lbl.setAttribute('x', x); lbl.setAttribute('text-anchor', anchor); }
+    });
     function show(e) {
       const r = svg.getBoundingClientRect();
       const px = e.clientX - r.left;
@@ -1146,7 +1357,7 @@
       const p = pts[best];
       cross.setAttribute('x1', p.x); cross.setAttribute('x2', p.x); cross.setAttribute('visibility', 'visible');
       $$('.trend-dot', el).forEach(d => d.classList.toggle('on', +d.dataset.i === best));
-      tip.innerHTML = `<strong>${fmtDate(p.s.date)}</strong><span>Best ${fmtTime(p.s.best)}s${par ? ' · ' + vsPar(p.s.best, par) : ''}</span>
+      tip.innerHTML = `<strong>${fmtDate(p.s.date)}</strong><span>Best ${hf ? 'HF ' + fmtHF(p.s.best) : fmtTime(p.s.best) + 's'}${par ? ' · ' + vsPar(p.s.best, par) : ''}</span>
         <span class="muted">${p.s.count} run${p.s.count === 1 ? '' : 's'} that day</span>`;
       tip.hidden = false;
       const tw = tip.offsetWidth;
@@ -1162,6 +1373,38 @@
     zone.addEventListener('pointermove', show);
     zone.addEventListener('pointerdown', show);
     zone.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') hide(); });
+  }
+
+  // Goal progress for one drill/stage on a member's history card.
+  function goalHTML(it, goal, canEdit) {
+    const hf = it.mode === 'hf';
+    const unit = hf ? ' HF' : 's';
+    let view;
+    if (goal == null) {
+      view = canEdit ? '<button type="button" class="link-btn" data-goal-edit>🎯 Set a goal</button>' : '';
+    } else {
+      const met = hf ? it.best >= goal : it.best <= goal;
+      const start = it.sessions[0].best;
+      const total = hf ? goal - start : start - goal;
+      const done = hf ? it.best - start : start - it.best;
+      const pct = met ? 100 : total > 0 ? Math.max(0, Math.min(100, Math.round(done / total * 100))) : 0;
+      const left = Math.abs(goal - it.best);
+      view = `<div class="goal-line-text"><span>🎯 Goal <b>${fmtScore(goal, it.mode)}${unit}</b></span>
+          <span class="${met ? 'goal-met' : 'muted'}">${met ? 'Goal met! ✅' : `${fmtScore(left, it.mode)}${unit} to go`}</span>
+          ${canEdit ? '<button type="button" class="link-btn" data-goal-edit>Edit</button>' : ''}</div>
+        <div class="goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>`;
+    }
+    if (!view) return '';
+    return `<div class="goal" data-goal="${esc(it.kind + ':' + it.id)}">
+      <div class="goal-view">${view}</div>
+      ${canEdit ? `<form class="goal-form" hidden>
+        <input type="number" min="0" step="${hf ? '0.0001' : '0.01'}" inputmode="decimal" value="${goal == null ? '' : goal}" placeholder="${hf ? 'e.g. 5.0000' : 'e.g. ' + fmtTime(it.best * 0.95)}" aria-label="Goal">
+        <span class="muted">${hf ? 'HF' : 'sec'}</span>
+        <button class="btn sm primary" type="submit">Save</button>
+        ${goal != null ? '<button class="btn sm" type="button" data-goal-clear>Clear</button>' : ''}
+        <button class="btn sm" type="button" data-goal-cancel>Cancel</button>
+      </form>` : ''}
+    </div>`;
   }
 
   function renderHistory(m) {
@@ -1188,7 +1431,7 @@
       </select>`;
       const head = `<a class="back" href="#/members">← Members</a>
         <div class="page-head history-head"><div><p class="eyebrow">Shooter history</p><h1>${who ? esc(who.name) : 'History'}</h1></div>
-        <label class="who-label">Shooter ${picker}</label></div>`;
+        <label class="who-label">Shooter ${picker}</label></div>${divChipsHTML()}`;
 
       if (!who) {
         app.innerHTML = head + emptyState('📈', 'No shooters yet', 'Add members and record some times to see their progress here.', '<a class="btn primary" href="#/members">Go to members</a>');
@@ -1197,14 +1440,16 @@
       }
 
       const key = shooterKey(who.name);
-      const runs = Store.all('times').filter(r => {
+      const member = who.memberId ? Store.get('members', who.memberId) : null;
+      const goals = (member && member.goals) || {};
+      const runs = byDivision(Store.all('times').filter(r => {
         if (who.memberId && r.memberId === who.memberId) return true;
         // Runs saved by name (before the member existed, or for guests).
         return shooterKey(r.shooter) === key && (!r.memberId || !Store.get('members', r.memberId));
-      });
+      }));
 
       if (!runs.length) {
-        app.innerHTML = head + emptyState('⏱', `No times for ${esc(who.name)} yet`, 'Once they record a drill or stage, their progress shows up here.', '<a class="btn primary" href="#/record">Record a time</a>');
+        app.innerHTML = head + emptyState('⏱', `No times for ${esc(who.name)} yet${divFilter !== 'all' ? ' with this gun' : ''}`, 'Once they record a drill or stage, their progress shows up here.', '<a class="btn primary" href="#/record">Record a time</a>');
         bindPicker();
         return;
       }
@@ -1220,31 +1465,36 @@
       const items = [...groups.values()].map(list2 => {
         const r0 = list2[0];
         const item = itemFor(r0.kind, r0.itemId);
+        const mode = modeOf(r0.kind, item);
+        const hf = mode === 'hf';
+        const scored = list2.filter(r => isHF(r) === hf);
+        if (!scored.length) return null;
         const par = r0.kind === 'drill' ? num(item ? item.par : r0.par) : null;
         const byDay = new Map();
-        list2.forEach(r => {
-          const d = byDay.get(r.date) || { date: r.date, best: Infinity, count: 0 };
-          d.best = Math.min(d.best, r.time);
+        scored.forEach(r => {
+          const v = scoreOf(r, mode);
+          const d = byDay.get(r.date) || { date: r.date, best: v, count: 0 };
+          if (hf ? v > d.best : v < d.best) d.best = v;
           d.count++;
           byDay.set(r.date, d);
         });
         const sessions = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date));
-        const sorted = list2.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
-        const times = sorted.map(r => r.time);
-        const groupRank = rankRuns(runsFor(r0.kind, r0.itemId));
+        const sorted = scored.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
+        const vals = sorted.map(r => scoreOf(r, mode));
+        const groupRank = rankRuns(byDivision(runsFor(r0.kind, r0.itemId)), mode);
         const rank = groupRank.findIndex(g => shooterKey(g.shooter) === key) + 1;
         if (rank === 1) recordsHeld++;
         return {
-          kind: r0.kind, id: r0.itemId, exists: !!item, name: item ? item.name : r0.itemName, par, sessions,
-          count: list2.length, best: Math.min(...times),
-          avg: times.reduce((a, b) => a + b, 0) / times.length,
-          latest: sorted[sorted.length - 1],
-          underPar: par ? list2.filter(r => r.time <= par).length : null,
+          kind: r0.kind, id: r0.itemId, exists: !!item, name: item ? item.name : r0.itemName, par, mode, sessions,
+          count: scored.length, best: hf ? Math.max(...vals) : Math.min(...vals),
+          avg: vals.reduce((a, b) => a + b, 0) / vals.length,
+          latest: scoreOf(sorted[sorted.length - 1], mode),
+          underPar: par ? scored.filter(r => r.time <= par).length : null,
           rank, of: groupRank.length,
           change: sessions.length > 1 ? sessions[sessions.length - 1].best - sessions[0].best : null,
           lastDate: sessions[sessions.length - 1].date,
         };
-      }).sort((a, b) => b.lastDate.localeCompare(a.lastDate) || a.name.localeCompare(b.name));
+      }).filter(Boolean).sort((a, b) => b.lastDate.localeCompare(a.lastDate) || a.name.localeCompare(b.name));
 
       // ---- overall ----
       const days = new Set(runs.map(r => r.date));
@@ -1252,16 +1502,20 @@
       const parFor = r => { const it = itemFor('drill', r.itemId); return num(it ? it.par : r.par); };
       const parRuns = drillRuns.filter(r => parFor(r));
       const underParPct = parRuns.length ? Math.round(parRuns.filter(r => r.time <= parFor(r)).length / parRuns.length * 100) : null;
-      const clean = runs.filter(r => !(r.penTime > 0)).length;
-      const penTotals = Store.PENALTIES.map(p => ({ p, n: runs.reduce((sum, r) => sum + ((r.pen || {})[p.key] || 0), 0) })).filter(x => x.n > 0);
+      const hfPen = { miss: 'm', ns: 'ns', proc: 'p' }; // hit-factor runs record these as hits
+      const penCount = (r, key) => ((r.pen || {})[key] || 0) + (isHF(r) && hfPen[key] ? ((r.hits || {})[hfPen[key]] || 0) : 0);
+      const clean = runs.filter(r => !(r.penTime > 0) && !Object.keys(hfPen).some(k => penCount(r, k) > 0)).length;
+      const penTotals = Store.PENALTIES.map(p => ({ p, n: runs.reduce((sum, r) => sum + penCount(r, p.key), 0) })).filter(x => x.n > 0);
       const penSeconds = runs.reduce((sum, r) => sum + (r.penTime || 0), 0);
       const recent = runs.slice().sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 30);
 
       const trend = it => {
         if (it.change === null) return '<span class="trend flat">Shoot it on another day to see a trend</span>';
-        if (Math.abs(it.change) < 0.005) return '<span class="trend flat">→ Same best as the first day</span>';
-        const faster = it.change < 0;
-        return `<span class="trend ${faster ? 'up' : 'down'}">${faster ? '▼' : '▲'} ${fmtTime(Math.abs(it.change))}s ${faster ? 'faster' : 'slower'} since ${fmtShort(it.sessions[0].date)}</span>`;
+        const tiny = it.mode === 'hf' ? 0.00005 : 0.005;
+        if (Math.abs(it.change) < tiny) return '<span class="trend flat">→ Same best as the first day</span>';
+        const better = it.mode === 'hf' ? it.change > 0 : it.change < 0;
+        const amount = it.mode === 'hf' ? `${fmtHF(Math.abs(it.change))} HF ${better ? 'higher' : 'lower'}` : `${fmtTime(Math.abs(it.change))}s ${better ? 'faster' : 'slower'}`;
+        return `<span class="trend ${better ? 'up' : 'down'}">${better ? '▲ ' : '▼ '}${amount} since ${fmtShort(it.sessions[0].date)}</span>`;
       };
 
       app.innerHTML = head + `
@@ -1278,16 +1532,17 @@
           ${items.map((it, i) => `<div class="card progress-card">
             <div class="result-head">
               <h3>${it.exists ? `<a href="#/${it.kind}s/${esc(it.id)}">${esc(it.name)}</a>` : esc(it.name)}</h3>
-              <span class="kind ${it.kind}">${it.kind === 'drill' ? 'Drill' : 'Stage'}</span>
+              <span class="kind ${it.kind}">${it.kind === 'drill' ? 'Drill' : it.mode === 'hf' ? 'Stage · HF' : 'Stage'}</span>
             </div>
             ${trend(it)}
             <div class="mini-stats">
-              <div><span class="label">Best</span><span class="value">${fmtTime(it.best)}</span></div>
-              <div><span class="label">Average</span><span class="value">${fmtTime(it.avg)}</span></div>
-              <div><span class="label">Latest</span><span class="value">${fmtTime(it.latest.time)}</span></div>
+              <div><span class="label">Best</span><span class="value">${fmtScore(it.best, it.mode)}</span></div>
+              <div><span class="label">Average</span><span class="value">${fmtScore(it.avg, it.mode)}</span></div>
+              <div><span class="label">Latest</span><span class="value">${fmtScore(it.latest, it.mode)}</span></div>
               <div><span class="label">Rank</span><span class="value">${it.rank ? `${it.rank === 1 ? '🏆 ' : ''}#${it.rank}<small> of ${it.of}</small>` : '—'}</span></div>
             </div>
-            ${it.sessions.length > 1 ? `<div class="chart-caption">Best time each range day${it.par ? ' · lower is faster' : ' (seconds, lower is faster)'}</div><div class="trend-chart" data-chart="${i}"></div>` : ''}
+            ${goalHTML(it, num(goals[it.kind + ':' + it.id]), !!member)}
+            ${it.sessions.length > 1 ? `<div class="chart-caption">${it.mode === 'hf' ? 'Best hit factor each range day · higher is better' : `Best time each range day${it.par ? ' · lower is faster' : ' (seconds, lower is faster)'}`}</div><div class="trend-chart" data-chart="${i}"></div>` : ''}
             <p class="muted small">${it.count} run${it.count === 1 ? '' : 's'} over ${it.sessions.length} day${it.sessions.length === 1 ? '' : 's'}${it.par ? ` · ${it.underPar} under par (${Math.round(it.underPar / it.count * 100)}%)` : ''}</p>
           </div>`).join('')}
         </div>
@@ -1296,7 +1551,7 @@
           <div class="card">
             <h3>Penalties</h3>
             ${penTotals.length ? `
-              <p class="muted small">${fmtTime(penSeconds)}s of penalties over ${runs.length} runs, an average of ${fmtTime(penSeconds / runs.length)}s per run.</p>
+              ${penSeconds > 0 ? `<p class="muted small">${fmtTime(penSeconds)}s of time penalties over ${runs.length} runs, an average of ${fmtTime(penSeconds / runs.length)}s per run.</p>` : ''}
               <table class="table"><thead><tr><th>Type</th><th class="num">Count</th><th class="num">Per run</th></tr></thead><tbody>
               ${penTotals.sort((a, b) => b.n - a.n).map(x => `<tr><td>${x.p.label}</td><td class="num strong">${x.n}</td><td class="num">${(x.n / runs.length).toFixed(2)}</td></tr>`).join('')}
               </tbody></table>`
@@ -1304,12 +1559,12 @@
           </div>
           <div class="card">
             <h3>Recent runs <span class="count">${runs.length}</span></h3>
-            <div class="scroll"><table class="table"><thead><tr><th>Date</th><th>Drill / stage</th><th class="num">Time</th></tr></thead><tbody>
+            <div class="scroll"><table class="table"><thead><tr><th>Date</th><th>Drill / stage</th><th class="num">Score</th></tr></thead><tbody>
             ${recent.map(r => {
               const it = itemFor(r.kind, r.itemId);
               const par = r.kind === 'drill' ? num(it ? it.par : r.par) : null;
               return `<tr><td><a href="#/day/${r.date}">${fmtShort(r.date)}</a></td>
-                <td>${esc(it ? it.name : r.itemName)}${par ? `<span class="sub">${vsPar(r.time, par)} vs par</span>` : ''}</td>
+                <td>${esc(it ? it.name : r.itemName)}${par && !isHF(r) ? `<span class="sub">${vsPar(r.time, par)} vs par</span>` : ''}${divNote(r)}</td>
                 <td class="num">${timeCell(r)}</td></tr>`;
             }).join('')}
             </tbody></table></div>
@@ -1318,15 +1573,46 @@
         </div>`;
 
       bindPicker();
+      if (member) bindGoals(member);
       drawCharts();
       function drawCharts() {
-        $$('.trend-chart').forEach(el => { const it = items[+el.dataset.chart]; drawTrend(el, it.sessions, it.par); });
+        $$('.trend-chart').forEach(el => {
+          const it = items[+el.dataset.chart];
+          drawTrend(el, it.sessions, it.par, it.mode, num(goals[it.kind + ':' + it.id]));
+        });
       }
       redraw = drawCharts;
     };
 
     function bindPicker() {
       $('#who-pick').addEventListener('change', e => { if (e.target.value) location.hash = e.target.value; });
+    }
+
+    // Goals are stored on the member: goals['drill:<id>'] = target (null when cleared).
+    function bindGoals(member) {
+      const save = (key, value) => {
+        const cur = Store.get('members', member.id) || member;
+        const goals = Object.assign({}, cur.goals || {}, { [key]: value });
+        Store.update('members', member.id, { name: cur.name, goals });
+      };
+      $$('.goal').forEach(box => {
+        const key = box.dataset.goal;
+        const form = $('.goal-form', box);
+        const view = $('.goal-view', box);
+        const editBtn = $('[data-goal-edit]', box);
+        if (!form || !editBtn) return;
+        editBtn.addEventListener('click', () => { view.hidden = true; form.hidden = false; $('input', form).focus(); });
+        $('[data-goal-cancel]', form).addEventListener('click', () => { form.hidden = true; view.hidden = false; });
+        const clear = $('[data-goal-clear]', form);
+        if (clear) clear.addEventListener('click', () => { save(key, null); toast('Goal cleared'); });
+        form.addEventListener('submit', e => {
+          e.preventDefault();
+          const v = num($('input', form).value);
+          if (v === null || v <= 0) return;
+          save(key, v);
+          toast('Goal saved 🎯');
+        });
+      });
     }
 
     let redraw = null;
@@ -1421,24 +1707,55 @@
    * Settings
    * ======================================================= */
   function renderSettings() {
-    const pens = Store.settings().penalties;
+    const st = Store.settings();
+    const pens = st.penalties;
+    let divs = st.divisions.slice();
     app.innerHTML = `
       <div class="page-head"><div><p class="eyebrow">Settings</p><h1>Settings</h1></div></div>
-      <form class="card settings-card" id="settings-form" autocomplete="off">
-        <h3>Penalties</h3>
-        <p class="muted">Seconds added to the raw time for each one. Set a penalty to 0 to turn it off; it won't appear on the record form.</p>
-        <div class="settings-grid">
-          ${Store.PENALTIES.map(p => `<label>${p.label}${p.stageOnly ? ' <span class="muted small">(stages only)</span>' : ''}
-            <span class="input-suffix"><input name="${p.key}" type="number" min="0" max="60" step="0.05" inputmode="decimal" required value="${fmtSec(pens[p.key])}"><span>sec</span></span>
-          </label>`).join('')}
-        </div>
-        <p class="hint">Changes apply to times recorded from now on. Times already saved keep the penalties they were scored with.</p>
-        <div class="actions">
-          <button class="btn primary" type="submit">Save settings</button>
-          <button class="btn" type="button" id="defaults">Restore defaults</button>
-        </div>
-      </form>`;
+      <div class="stack settings-page">
+        <form class="card settings-card" id="settings-form" autocomplete="off">
+          <h3>Penalties</h3>
+          <p class="muted">Seconds added to the raw time for each one (time-plus scoring). Set a penalty to 0 to turn it off; it won't appear on the record form.</p>
+          <div class="settings-grid">
+            ${Store.PENALTIES.map(p => `<label>${p.label}${p.stageOnly ? ' <span class="muted small">(stages only)</span>' : ''}
+              <span class="input-suffix"><input name="${p.key}" type="number" min="0" max="60" step="0.05" inputmode="decimal" required value="${fmtSec(pens[p.key])}"><span>sec</span></span>
+            </label>`).join('')}
+          </div>
+          <p class="hint">Changes apply to times recorded from now on. Times already saved keep the penalties they were scored with.</p>
+          <div class="actions">
+            <button class="btn primary" type="submit">Save penalties</button>
+            <button class="btn" type="button" id="defaults">Restore defaults</button>
+          </div>
+        </form>
 
+        <div class="card settings-card">
+          <h3>Gun types</h3>
+          <p class="muted">Shooters pick one when recording a time, and leaderboards can be filtered by it.</p>
+          <ul class="gun-list" id="gun-list"></ul>
+          <form class="gun-add" id="gun-add" autocomplete="off">
+            <input name="gun" maxlength="30" placeholder="Add a gun type, e.g. Revolver" aria-label="New gun type">
+            <button class="btn" type="submit">Add</button>
+          </form>
+          <p class="hint">Removing a gun type here doesn't change runs already recorded with it.</p>
+        </div>
+
+        <div class="card settings-card">
+          <h3>Export</h3>
+          <p class="muted">Download your group's data, for a spreadsheet, a year-end recap or a backup.</p>
+          <div class="actions">
+            <button class="btn" type="button" id="export-csv">⬇ All times (spreadsheet .csv)</button>
+            <button class="btn" type="button" id="export-json">⬇ Full backup (.json)</button>
+          </div>
+        </div>
+
+        <div class="card settings-card">
+          <h3>Range day</h3>
+          <p class="muted">Set the next range day, what you'll shoot and the shooting order.</p>
+          <a class="btn" href="#/plan">📋 Open range day plan</a>
+        </div>
+      </div>`;
+
+    // ---- penalties ----
     const form = $('#settings-form');
     form.addEventListener('input', () => { editorDirty = true; });
     $('#defaults').addEventListener('click', () => {
@@ -1451,8 +1768,464 @@
       Store.PENALTIES.forEach(p => { penalties[p.key] = Math.max(0, round2(num(form.elements[p.key].value) || 0)); });
       Store.saveSettings({ penalties });
       editorDirty = false;
-      toast('Settings saved');
+      toast('Penalties saved');
     });
+
+    // ---- gun types (saved right away) ----
+    function drawGuns() {
+      $('#gun-list').innerHTML = divs.length ? divs.map((d, i) => `<li><span>${esc(d)}</span>
+        <span class="plan-btns">
+          <button type="button" class="icon-btn" data-gun-move="${i}" data-dir="-1" aria-label="Move ${esc(d)} up"${i === 0 ? ' disabled' : ''}>↑</button>
+          <button type="button" class="icon-btn" data-gun-move="${i}" data-dir="1" aria-label="Move ${esc(d)} down"${i === divs.length - 1 ? ' disabled' : ''}>↓</button>
+          <button type="button" class="icon-btn" data-gun-remove="${i}" aria-label="Remove ${esc(d)}">×</button>
+        </span></li>`).join('') : '<li class="muted">No gun types. The Gun choice is hidden on the record form.</li>';
+    }
+    const saveGuns = () => { Store.saveSettings({ divisions: divs }); drawGuns(); };
+    $('#gun-list').addEventListener('click', e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.gunMove != null) {
+        const i = +b.dataset.gunMove, j = i + +b.dataset.dir;
+        [divs[i], divs[j]] = [divs[j], divs[i]];
+      } else if (b.dataset.gunRemove != null) {
+        if (!confirm(`Remove "${divs[+b.dataset.gunRemove]}"?`)) return;
+        divs.splice(+b.dataset.gunRemove, 1);
+      } else return;
+      saveGuns();
+    });
+    $('#gun-add').addEventListener('submit', e => {
+      e.preventDefault();
+      const inp = e.target.elements.gun;
+      const v = inp.value.trim().replace(/\s+/g, ' ');
+      if (!v) return;
+      if (divs.some(d => d.toLowerCase() === v.toLowerCase())) { toast(`${v} is already listed`); return; }
+      divs.push(v);
+      inp.value = '';
+      saveGuns();
+      toast(`Added ${v}`);
+    });
+    drawGuns();
+
+    // ---- export ----
+    function download(name, text, type) {
+      const url = URL.createObjectURL(new Blob([text], { type }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    $('#export-csv').addEventListener('click', () => {
+      const cell = v => {
+        const t = v == null ? '' : String(v);
+        return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      };
+      const head = ['Date', 'Shooter', 'Gun', 'Type', 'Drill / stage', 'Scoring', 'Final time', 'Raw time', 'Penalty seconds',
+        'A', 'C', 'D', 'Misses', 'No-shoots', 'Procedurals', 'Points', 'Hit factor', 'Power factor', 'Par', 'Notes'];
+      const rows = Store.all('times').sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0)).map(r => {
+        const it = itemFor(r.kind, r.itemId);
+        const hf = isHF(r);
+        const h = r.hits || {}, pen = r.pen || {};
+        return [r.date, r.shooter, r.division || '', r.kind === 'drill' ? 'Drill' : 'Stage', it ? it.name : r.itemName,
+          hf ? 'Hit factor' : 'Time plus', fmtTime(r.time), r.raw != null ? fmtTime(r.raw) : '', hf ? '' : fmtTime(r.penTime || 0),
+          hf ? h.a || 0 : '', hf ? h.c || 0 : pen.c || 0, hf ? h.d || 0 : pen.d || 0, hf ? h.m || 0 : pen.miss || 0,
+          hf ? h.ns || 0 : pen.ns || 0, hf ? h.p || 0 : pen.proc || 0, hf ? r.points : '', hf ? fmtHF(r.hf) : '', hf ? r.pf || '' : '',
+          r.par != null ? fmtTime(r.par) : '', r.notes || ''].map(cell).join(',');
+      });
+      download(`range-log-times-${today()}.csv`, '﻿' + [head.join(',')].concat(rows).join('\r\n'), 'text/csv;charset=utf-8');
+      toast(`Exported ${rows.length} runs`);
+    });
+    $('#export-json').addEventListener('click', () => {
+      const data = { exported: new Date().toISOString(), settings: Store.settings() };
+      ['drills', 'stages', 'members', 'times'].forEach(c => { data[c] = Store.all(c); });
+      download(`range-log-backup-${today()}.json`, JSON.stringify(data, null, 2), 'application/json');
+      toast('Backup downloaded');
+    });
+  }
+
+  /* =========================================================
+   * Range day: next date, note, plan (drills/stages in order) and shooting order
+   * ======================================================= */
+  function rangeDayCardHTML() {
+    const rd = Store.settings().rangeDay;
+    if (!rd || !rd.date || rd.date < today()) return '';
+    const isToday = rd.date === today();
+    const items = (rd.items || []).map(itemOfValue).filter(x => x.item);
+    const names = (rd.shooters || []).map(id => Store.get('members', id)).filter(Boolean).map(x => x.name);
+    return `<div class="card range-day-card${isToday ? ' today' : ''}">
+      <div class="rd-head">
+        <span class="rd-icon" aria-hidden="true">📅</span>
+        <div class="rd-title"><p class="eyebrow">${isToday ? 'Range day today' : 'Next range day'}</p><h3>${fmtDate(rd.date, true)}</h3></div>
+        <a class="btn sm" href="#/plan">Edit</a>
+      </div>
+      ${rd.note ? `<p class="rd-note">${nl2br(rd.note)}</p>` : ''}
+      ${items.length ? `<div class="rd-items">${items.map((x, i) => `<a class="chip" href="#/${x.kind}s/${esc(x.id)}">${i + 1}. ${esc(x.item.name)}</a>`).join('')}</div>` : ''}
+      ${names.length ? `<p class="muted small">Shooting order: ${names.map(esc).join(', ')}</p>` : ''}
+      ${isToday && (items.length || names.length) ? '<a class="btn primary" href="#/record">⏱ Start recording</a>' : ''}
+    </div>`;
+  }
+
+  function renderPlan() {
+    const rd = Store.settings().rangeDay || {};
+    const st = {
+      date: rd.date && rd.date >= today() ? rd.date : today(),
+      note: rd.note || '',
+      items: (rd.items || []).filter(v => itemOfValue(v).item),
+      shooters: (rd.shooters || []).filter(id => Store.get('members', id)),
+    };
+    const byName = (a, b) => a.name.localeCompare(b.name);
+
+    app.innerHTML = `
+      <a class="back" href="#/">← Today</a>
+      <div class="page-head"><div><p class="eyebrow">Range day</p><h1>Range day plan</h1></div></div>
+      <p class="muted plan-intro">Set the next range day, what you'll shoot, and the shooting order. It shows on the home page, and on the day the Record screen steps through it.</p>
+      <form id="plan-form" class="stack plan-page" autocomplete="off">
+        <div class="card">
+          <div class="form-row">
+            <label>Date <input name="date" type="date" required value="${st.date}"></label>
+            <div></div>
+          </div>
+          <label>Note <textarea name="note" rows="3" maxlength="500" placeholder="e.g. 9 AM at Bay 3. Bring 150 rounds, eye and ear protection.">${esc(st.note)}</textarea></label>
+        </div>
+        <div class="card"><h3>Drills &amp; stages <span class="muted small">in the order you'll shoot them</span></h3><div id="plan-items"></div></div>
+        <div class="card"><h3>Shooting order</h3><div id="plan-shooters"></div></div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">Save plan</button>
+          ${rd.date ? '<button class="btn danger-outline" type="button" id="plan-clear">Clear plan</button>' : ''}
+          <a class="btn" href="#/">Cancel</a>
+        </div>
+      </form>`;
+
+    // An ordered list with ↑ ↓ ✕, plus buttons to add whatever isn't in it yet.
+    function listEditor(el, key, all, label) {
+      const chosen = st[key];
+      const rest = all.filter(x => !chosen.includes(x.value));
+      el.innerHTML = `
+        ${chosen.length ? `<ol class="plan-list">${chosen.map((v, i) => `<li>
+          <span class="plan-name">${esc(label(v))}</span>
+          <span class="plan-btns">
+            <button type="button" class="icon-btn" data-move="${i}" data-dir="-1" aria-label="Move up"${i === 0 ? ' disabled' : ''}>↑</button>
+            <button type="button" class="icon-btn" data-move="${i}" data-dir="1" aria-label="Move down"${i === chosen.length - 1 ? ' disabled' : ''}>↓</button>
+            <button type="button" class="icon-btn" data-remove="${i}" aria-label="Remove">×</button>
+          </span></li>`).join('')}</ol>` : '<p class="muted small">Nothing added yet.</p>'}
+        ${rest.length ? `<div class="plan-add"><span class="muted small">Add:</span>${rest.map(x => `<button type="button" class="chip" data-add="${esc(x.value)}">+ ${esc(x.name)}</button>`).join('')}
+          ${key === 'shooters' && rest.length > 1 ? '<button type="button" class="chip" data-add-all>+ Everyone</button>' : ''}</div>` : ''}
+        ${key === 'shooters' && chosen.length > 1 ? '<p><button type="button" class="btn sm" data-shuffle>🔀 Shuffle order</button></p>' : ''}`;
+      el.onclick = e => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.move != null) {
+          const i = +b.dataset.move, j = i + +b.dataset.dir;
+          [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
+        } else if (b.dataset.remove != null) chosen.splice(+b.dataset.remove, 1);
+        else if (b.dataset.add != null) chosen.push(b.dataset.add);
+        else if (b.hasAttribute('data-add-all')) rest.forEach(x => chosen.push(x.value));
+        else if (b.hasAttribute('data-shuffle')) {
+          for (let i = chosen.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [chosen[i], chosen[j]] = [chosen[j], chosen[i]]; }
+        } else return;
+        editorDirty = true;
+        draw();
+      };
+    }
+    function draw() {
+      const allItems = Store.all('drills').sort(byName).map(d => ({ value: 'drill:' + d.id, name: d.name }))
+        .concat(Store.all('stages').sort(byName).map(x => ({ value: 'stage:' + x.id, name: x.name + ' (stage)' })));
+      listEditor($('#plan-items'), 'items', allItems, v => { const x = itemOfValue(v); return x.item.name + (x.kind === 'stage' ? ' (stage)' : ''); });
+      const allPeople = members().map(x => ({ value: x.id, name: x.name }));
+      listEditor($('#plan-shooters'), 'shooters', allPeople, id => (Store.get('members', id) || {}).name || '?');
+      if (!allPeople.length) $('#plan-shooters').innerHTML = '<p class="muted small">Add members on the <a href="#/members">Members</a> page to set a shooting order.</p>';
+    }
+    draw();
+
+    const form = $('#plan-form');
+    form.addEventListener('input', () => { editorDirty = true; });
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      Store.saveSettings({ rangeDay: { date: form.elements.date.value || today(), note: form.elements.note.value.trim(), items: st.items, shooters: st.shooters } });
+      editorDirty = false;
+      toast('Range day saved');
+      location.hash = '#/';
+    });
+    const clear = $('#plan-clear');
+    if (clear) clear.addEventListener('click', () => {
+      if (!confirm('Clear the range day plan?')) return;
+      Store.saveSettings({ rangeDay: null });
+      editorDirty = false;
+      toast('Plan cleared');
+      location.hash = '#/';
+    });
+  }
+
+  /* =========================================================
+   * Season standings
+   * ======================================================= */
+  // Points for places on each drill/stage each range day; everyone who shoots it gets at least 1.
+  const PLACE_POINTS = [10, 8, 6, 5, 4, 3, 2];
+
+  function renderStandings(m) {
+    const param = (m && m[1]) || 'm-' + today().slice(0, 7);
+    const pad2 = n => String(n).padStart(2, '0');
+    let from = '0000-00-00', to = '9999-12-31', label = 'All time', prev = null, next = null, kind = 'all';
+    if (/^y-\d{4}$/.test(param)) {
+      const y = +param.slice(2);
+      kind = 'year'; from = `${y}-01-01`; to = `${y}-12-31`; label = String(y); prev = `y-${y - 1}`; next = `y-${y + 1}`;
+    } else if (/^m-\d{4}-\d{2}$/.test(param)) {
+      const [y, mo] = param.slice(2).split('-').map(Number);
+      kind = 'month'; from = `${y}-${pad2(mo)}-01`; to = iso(new Date(y, mo, 0));
+      label = new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      const p = new Date(y, mo - 2, 1), n = new Date(y, mo, 1);
+      prev = `m-${p.getFullYear()}-${pad2(p.getMonth() + 1)}`; next = `m-${n.getFullYear()}-${pad2(n.getMonth() + 1)}`;
+    }
+    const thisMonth = 'm-' + today().slice(0, 7), thisYear = 'y-' + today().slice(0, 4);
+
+    const render = () => {
+      const runs = byDivision(Store.all('times').filter(r => r.date >= from && r.date <= to));
+      const table = new Map();
+      const entry = r => {
+        const k = shooterKey(r.shooter);
+        if (!table.has(k)) table.set(k, { name: r.shooter.trim(), memberId: r.memberId, points: 0, wins: 0, podiums: 0, days: new Set(), runs: 0 });
+        return table.get(k);
+      };
+      runs.forEach(r => { const e = entry(r); e.days.add(r.date); e.runs++; });
+
+      // Group runs by range day + drill/stage, rank each group, hand out points.
+      const groups = new Map();
+      runs.forEach(r => {
+        const k = r.date + '|' + r.kind + ':' + r.itemId;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      });
+      groups.forEach(list => {
+        const r0 = list[0];
+        rankRuns(list, modeOf(r0.kind, itemFor(r0.kind, r0.itemId))).forEach((g, i) => {
+          const e = entry(g.best);
+          e.points += PLACE_POINTS[i] || 1;
+          if (i === 0) e.wins++;
+          if (i < 3) e.podiums++;
+        });
+      });
+      const standings = [...table.values()].sort((a, b) => b.points - a.points || b.wins - a.wins || a.name.localeCompare(b.name));
+      // Same points and wins = same place.
+      standings.forEach((x, i) => {
+        const p = standings[i - 1];
+        x.place = p && p.points === x.points && p.wins === x.wins ? p.place : i;
+      });
+
+      // Most improved: average % change from first to last range day on each drill/stage shot on 2+ days.
+      const improved = [];
+      const perShooter = new Map();
+      runs.forEach(r => {
+        const k = shooterKey(r.shooter);
+        if (!perShooter.has(k)) perShooter.set(k, { name: r.shooter.trim(), memberId: r.memberId, items: new Map() });
+        const ps = perShooter.get(k);
+        const ik = r.kind + ':' + r.itemId;
+        if (!ps.items.has(ik)) ps.items.set(ik, []);
+        ps.items.get(ik).push(r);
+      });
+      perShooter.forEach(ps => {
+        const changes = [];
+        ps.items.forEach(list => {
+          const r0 = list[0];
+          const mode = modeOf(r0.kind, itemFor(r0.kind, r0.itemId));
+          const hf = mode === 'hf';
+          const byDay = new Map();
+          list.filter(r => isHF(r) === hf).forEach(r => {
+            const v = scoreOf(r, mode);
+            const cur = byDay.get(r.date);
+            if (cur === undefined || (hf ? v > cur : v < cur)) byDay.set(r.date, v);
+          });
+          const daysSorted = [...byDay.keys()].sort();
+          if (daysSorted.length < 2) return;
+          const a = byDay.get(daysSorted[0]), b = byDay.get(daysSorted[daysSorted.length - 1]);
+          if (!a) return;
+          changes.push(hf ? (b - a) / a * 100 : (a - b) / a * 100);
+        });
+        if (changes.length) {
+          const avg = changes.reduce((x, y) => x + y, 0) / changes.length;
+          if (avg > 0) improved.push({ name: ps.name, memberId: ps.memberId, pct: avg, items: changes.length });
+        }
+      });
+      improved.sort((a, b) => b.pct - a.pct);
+
+      app.innerHTML = `
+        <div class="page-head"><div><p class="eyebrow">Season standings</p><h1>${esc(label)}</h1></div>
+          <div class="day-nav">
+            ${prev ? `<a class="btn icon" href="#/standings/${prev}" aria-label="Previous">‹</a>` : ''}
+            ${next ? `<a class="btn icon" href="#/standings/${next}" aria-label="Next">›</a>` : ''}
+          </div>
+        </div>
+        <div class="chips">
+          <a class="chip${param === thisMonth ? ' active' : ''}" href="#/standings/${thisMonth}">This month</a>
+          <a class="chip${param === thisYear ? ' active' : ''}" href="#/standings/${thisYear}">This year</a>
+          <a class="chip${kind === 'all' ? ' active' : ''}" href="#/standings/all">All time</a>
+        </div>
+        ${divChipsHTML()}
+        ${standings.length ? `
+          <div class="two-col">
+            <div class="stack">
+              <div class="card">
+                <h3>🏆 Points</h3>
+                <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">Points</th><th class="num">Wins</th><th class="num">Days</th></tr></thead><tbody>
+                ${standings.map(x => `<tr${x.place === 0 ? ' class="first"' : ''}><td class="rank">${medal(x.place)}</td><td>${shooterLink(x.name, x.memberId)}</td>
+                  <td class="num strong">${x.points}</td><td class="num">${x.wins}</td><td class="num muted">${x.days.size}</td></tr>`).join('')}
+                </tbody></table>
+                <p class="muted small">Each range day, every drill and stage awards ${PLACE_POINTS.join(' / ')} points for 1st–${PLACE_POINTS.length}th place, and 1 point for everyone else who shoots it.</p>
+              </div>
+            </div>
+            <div class="stack">
+              <div class="card">
+                <h3>📈 Most improved</h3>
+                ${improved.length ? `<ol class="improved">${improved.slice(0, 5).map(x => `<li>${shooterLink(x.name, x.memberId)}
+                  <span class="trend up">▲ ${x.pct.toFixed(1)}%</span><span class="muted small">over ${x.items} drill${x.items === 1 ? '' : 's'}/stage${x.items === 1 ? '' : 's'}</span></li>`).join('')}</ol>
+                  <p class="muted small">Average improvement from each shooter's first to last range day on every drill or stage they shot on at least two days in this period.</p>`
+                : '<p class="muted">Shoot the same drill or stage on two different range days in this period to show up here.</p>'}
+              </div>
+            </div>
+          </div>`
+        : emptyState('🏆', 'No results in this period', 'Record some times and the standings fill in automatically.', '<a class="btn primary" href="#/record">Record times</a>')}`;
+    };
+    render();
+    pageRefresh = render;
+  }
+
+  /* =========================================================
+   * Dry fire timer — start beep after a random delay, par beep at the par time.
+   * Deliberately labeled for dry fire only; live fire uses a real shot timer.
+   * ======================================================= */
+  const TIMER_KEY = 'rangelog-timer';
+  function renderTimer(m) {
+    const drill = m && m[1] && m[1].startsWith('drill:') ? Store.get('drills', m[1].slice(6)) : null;
+    let prefs = { min: 1.5, max: 4, repeat: false };
+    try { prefs = Object.assign(prefs, JSON.parse(localStorage.getItem(TIMER_KEY) || '{}')); } catch (e) { /* ignore */ }
+    const par = drill ? num(drill.par) : num(prefs.par);
+
+    app.innerHTML = `
+      <a class="back" href="${drill ? '#/drills/' + esc(drill.id) : '#/drills'}">← ${drill ? esc(drill.name) : 'Drills'}</a>
+      <div class="dry-banner" role="note"><strong>DRY FIRE ONLY.</strong> Unloaded gun, no ammunition in the room. For live fire, use a real shot timer.</div>
+      <div class="timer-page">
+        <div class="card timer-card" id="timer-card">
+          <p class="eyebrow">Dry fire timer${drill ? ' · ' + esc(drill.name) : ''}</p>
+          <div class="timer-display" id="t-display" aria-live="off">0.00</div>
+          <div class="timer-status" id="t-status">Press Start, then wait for the beep</div>
+          <button type="button" class="btn primary timer-start" id="t-start">Start</button>
+          <p class="muted small" id="t-reps"></p>
+        </div>
+        <div class="card timer-settings">
+          <h3>Settings</h3>
+          <label>Par time (seconds) <input id="t-par" type="number" min="0.1" max="120" step="0.01" inputmode="decimal" value="${par ? fmtTime(par) : ''}" placeholder="No par beep"></label>
+          <div class="form-row">
+            <label>Random delay from (s) <input id="t-min" type="number" min="0" max="20" step="0.5" inputmode="decimal" value="${prefs.min}"></label>
+            <label>to (s) <input id="t-max" type="number" min="0" max="20" step="0.5" inputmode="decimal" value="${prefs.max}"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="t-repeat"${prefs.repeat ? ' checked' : ''}> Keep repeating (new rep a few seconds after each par)</label>
+          <p class="hint">The start beep is high, the par beep is lower. On an iPhone, turn off silent mode to hear them. The screen also flashes for each beep.</p>
+        </div>
+      </div>`;
+
+    const display = $('#t-display'), status = $('#t-status'), startBtn = $('#t-start'), card = $('#timer-card');
+    let ctx = null, startAt = 0, repPar = null, raf = 0, nodes = [], timers = [], running = false, reps = 0, wakeLock = null;
+
+    function audio() {
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+    function beep(at, freq, dur) {
+      const c = audio();
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = 'square';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.35, at + 0.01);
+      g.gain.setValueAtTime(0.35, at + dur - 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      o.connect(g).connect(c.destination);
+      o.start(at);
+      o.stop(at + dur + 0.05);
+      nodes.push(o);
+    }
+    function flash(cls, delayMs) {
+      timers.push(setTimeout(() => {
+        card.classList.add(cls);
+        if (navigator.vibrate) navigator.vibrate(cls === 'flash-start' ? 120 : [60, 40, 60]);
+        timers.push(setTimeout(() => card.classList.remove(cls), 250));
+      }, delayMs));
+    }
+    function settings() {
+      const p = num($('#t-par').value);
+      let lo = Math.max(0, num($('#t-min').value) || 0), hi = Math.max(0, num($('#t-max').value) || 0);
+      if (hi < lo) [lo, hi] = [hi, lo];
+      const out = { par: p && p > 0 ? p : null, min: lo, max: hi, repeat: $('#t-repeat').checked };
+      try { localStorage.setItem(TIMER_KEY, JSON.stringify(drill ? Object.assign({}, out, { par: prefs.par }) : out)); } catch (e) { /* ignore */ }
+      return out;
+    }
+    function tick() {
+      if (!running) return;
+      const t = ctx.currentTime - startAt;
+      if (t < 0) { display.textContent = '0.00'; status.textContent = 'Standby…'; }
+      else {
+        display.textContent = t.toFixed(2);
+        status.textContent = repPar && t >= repPar ? 'Par' : 'Go!';
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    function clearScheduled() {
+      nodes.forEach(o => { try { o.stop(); } catch (e) { /* already stopped */ } });
+      nodes = [];
+      timers.forEach(clearTimeout);
+      timers = [];
+      cancelAnimationFrame(raf);
+    }
+    function startRep() {
+      const cfg = settings();
+      const c = audio();
+      const delay = cfg.min + Math.random() * (cfg.max - cfg.min);
+      startAt = c.currentTime + delay;
+      repPar = cfg.par;
+      beep(startAt, 2600, 0.35);
+      flash('flash-start', delay * 1000);
+      let end = delay + 2; // without a par, the clock runs until Stop
+      if (cfg.par) {
+        beep(startAt + cfg.par, 1500, 0.3);
+        flash('flash-par', (delay + cfg.par) * 1000);
+        end = delay + cfg.par + 0.6;
+      }
+      reps++;
+      $('#t-reps').textContent = `Rep ${reps}`;
+      if (cfg.par) {
+        timers.push(setTimeout(() => {
+          if (!running) return;
+          if (cfg.repeat) { status.textContent = 'Reset… next rep coming'; timers.push(setTimeout(() => { if (running) startRep(); }, 3000)); }
+          else stop(true);
+        }, end * 1000));
+      }
+    }
+    async function start() {
+      running = true;
+      startBtn.textContent = 'Stop';
+      startBtn.classList.remove('primary');
+      startBtn.classList.add('danger-outline');
+      try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* not supported */ }
+      startRep();
+      raf = requestAnimationFrame(tick);
+    }
+    function stop(finished) {
+      running = false;
+      clearScheduled();
+      startBtn.textContent = 'Start';
+      startBtn.classList.add('primary');
+      startBtn.classList.remove('danger-outline');
+      status.textContent = finished ? 'Done. Press Start for another rep' : 'Stopped';
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    }
+    startBtn.addEventListener('click', () => (running ? stop(false) : start()));
+    ['#t-par', '#t-min', '#t-max', '#t-repeat'].forEach(sel => $(sel).addEventListener('change', settings));
+    pageCleanup = () => {
+      if (running) stop(false);
+      if (ctx) { ctx.close().catch(() => {}); ctx = null; }
+    };
   }
 
   /* =========================================================
@@ -1476,6 +2249,11 @@
     [/^#\/history\/guest\/(.+)$/, renderHistory],
     [/^#\/history\/([^/]+)$/, renderHistory],
     [/^#\/settings\/?$/, renderSettings],
+    [/^#\/plan\/?$/, renderPlan],
+    [/^#\/standings\/?$/, renderStandings],
+    [/^#\/standings\/(m-\d{4}-\d{2}|y-\d{4}|all)$/, renderStandings],
+    [/^#\/timer\/?$/, renderTimer],
+    [/^#\/timer\/(drill:[^/]+)$/, renderTimer],
   ];
 
   function router() {
@@ -1483,8 +2261,9 @@
     pageCleanup = null;
     pageRefresh = null;
     const hash = location.hash || '#/';
-    const section = hash.startsWith('#/history') ? 'members'
-      : ['drills', 'stages', 'record', 'members', 'settings'].find(s => hash.startsWith('#/' + s)) || 'day';
+    const alias = { history: 'members', plan: 'record', timer: 'drills' };
+    const first = (hash.match(/^#\/([a-z]+)/) || [])[1];
+    const section = alias[first] || ['drills', 'stages', 'record', 'members', 'settings', 'standings'].find(x => x === first) || 'day';
     $$('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === section));
     window.scrollTo(0, 0);
     for (const [re, fn] of routes) {
@@ -1528,10 +2307,19 @@
     const btn = e.target.closest('[data-del-time]');
     if (!btn) return;
     const t = Store.get('times', btn.dataset.delTime);
-    if (t && confirm(`Delete ${t.shooter}'s ${fmtTime(t.time)}s run on ${fmtDate(t.date)}?`)) {
+    if (t && confirm(`Delete ${t.shooter}'s ${isHF(t) ? 'HF ' + fmtHF(t.hf) : fmtTime(t.time) + 's'} run on ${fmtDate(t.date)}?`)) {
       Store.remove('times', t.id);
       toast('Run deleted');
     }
+  });
+
+  // Gun type filter chips (Day view, drill/stage leaderboards, history, standings).
+  app.addEventListener('click', e => {
+    const chip = e.target.closest('[data-div-filter]');
+    if (!chip) return;
+    divFilter = chip.dataset.divFilter;
+    setPref(DIV_FILTER_KEY, divFilter);
+    if (pageRefresh) pageRefresh();
   });
 
   app.addEventListener('click', e => {
