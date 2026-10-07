@@ -16,7 +16,9 @@
   const FB_VERSION = '10.12.2';
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
   const cfg = window.FIREBASE_CONFIG;
-  const mode = cfg && cfg.apiKey ? 'cloud' : 'local';
+  // Add ?demo to the address to try things on sample data kept only in this browser.
+  const forceDemo = /[?&]demo\b/.test(location.search);
+  const mode = cfg && cfg.apiKey && !forceDemo ? 'cloud' : 'local';
 
   const COLLECTIONS = ['drills', 'stages', 'times', 'members'];
 
@@ -215,8 +217,11 @@
   /* ---------- demo data for local mode ---------- */
   function sampleData() {
     const d0 = isoToday();
-    const y = new Date(); y.setDate(y.getDate() - 7);
-    const d1 = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0');
+    const daysAgo = n => {
+      const d = new Date(); d.setDate(d.getDate() - n);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    const d1 = daysAgo(7), d2 = daysAgo(14), d3 = daysAgo(28);
     let now = Date.now();
     const pens = DEFAULT_SETTINGS.penalties;
     // `time` is the raw time; any penalties are added on top, like a real entry.
@@ -276,6 +281,14 @@
         run('demo-stage', 'Barrel Run', 'stage', 'Mike', 13.04, d0, 'Steel make-up shot', { d: 1 }),
         run('demo-bill', 'Bill Drill', 'drill', 'John', 2.55, d1),
         run('demo-bill', 'Bill Drill', 'drill', 'Mike', 2.71, d1),
+        run('demo-bill', 'Bill Drill', 'drill', 'John', 2.78, d2, '', { c: 1 }),
+        run('demo-bill', 'Bill Drill', 'drill', 'John', 2.69, d2),
+        run('demo-bill', 'Bill Drill', 'drill', 'John', 3.12, d3, '', { miss: 1 }),
+        run('demo-bill', 'Bill Drill', 'drill', 'John', 2.94, d3),
+        run('demo-bill', 'Bill Drill', 'drill', 'Sarah', 2.41, d2),
+        run('demo-moz', 'Failure to Stop', 'drill', 'John', 2.31, d2),
+        run('demo-moz', 'Failure to Stop', 'drill', 'John', 2.48, d3, '', { c: 1 }),
+        run('demo-stage', 'Barrel Run', 'stage', 'John', 15.88, d2, '', { c: 2 }),
       ],
     };
   }

@@ -231,7 +231,7 @@
         <p class="muted small">Each shooter's best run</p>
         <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">Time</th>${parCol}<th>Date</th></tr></thead><tbody>
         ${ranked.map((r, i) => `<tr>
-          <td class="rank">${medal(i)}</td><td>${esc(r.shooter)}</td>
+          <td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}</td>
           <td class="num">${timeCell(r.best)}</td>
           ${par ? `<td class="num">${vsPar(r.best.time, par)}</td>` : ''}
           <td><a href="#/day/${r.best.date}">${fmtShort(r.best.date)}</a></td></tr>`).join('')}
@@ -241,7 +241,7 @@
         <h3>All runs <span class="count">${runs.length}</span></h3>
         <div class="scroll"><table class="table"><thead><tr><th>Date</th><th>Shooter</th><th class="num">Time</th>${parCol}<th></th></tr></thead><tbody>
         ${recent.map(r => `<tr>
-          <td><a href="#/day/${r.date}">${fmtShort(r.date)}</a></td><td>${esc(r.shooter)}${r.notes ? `<span class="sub">${esc(r.notes)}</span>` : ''}</td>
+          <td><a href="#/day/${r.date}">${fmtShort(r.date)}</a></td><td>${shooterLink(r.shooter, r.memberId)}${r.notes ? `<span class="sub">${esc(r.notes)}</span>` : ''}</td>
           <td class="num">${timeCell(r)}</td>
           ${par ? `<td class="num">${vsPar(r.time, par)}</td>` : ''}
           <td><button class="icon-btn" data-del-time="${esc(r.id)}" title="Delete this run" aria-label="Delete this run">×</button></td></tr>`).join('')}
@@ -346,7 +346,7 @@
       ${g.par ? `<p class="muted small">Par ${fmtTime(g.par)}s</p>` : ''}
       <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">Best</th>${g.par ? '<th class="num">vs Par</th>' : ''}<th class="num">Runs</th></tr></thead><tbody>
       ${g.ranked.map((r, i) => `<tr${i === 0 ? ' class="first"' : ''}>
-        <td class="rank">${medal(i)}</td><td>${esc(r.shooter)}</td>
+        <td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}</td>
         <td class="num">${timeCell(r.best)}</td>
         ${g.par ? `<td class="num">${vsPar(r.best.time, g.par)}</td>` : ''}
         <td class="num muted">${r.attempts}</td></tr>`).join('')}
@@ -922,7 +922,7 @@
         <h3>Today · ${esc(item.name)} <span class="count">${runs.length}</span></h3>
         ${ranked.length ? `
           <table class="table"><thead><tr><th></th><th>Shooter</th><th class="num">Best</th>${par ? '<th class="num">vs Par</th>' : ''}<th class="num">Runs</th></tr></thead><tbody>
-          ${ranked.map((r, i) => `<tr${i === 0 ? ' class="first"' : ''}><td class="rank">${medal(i)}</td><td>${esc(r.shooter)}</td>
+          ${ranked.map((r, i) => `<tr${i === 0 ? ' class="first"' : ''}><td class="rank">${medal(i)}</td><td>${shooterLink(r.shooter, r.best.memberId)}</td>
             <td class="num">${timeCell(r.best)}</td>${par ? `<td class="num">${vsPar(r.best.time, par)}</td>` : ''}<td class="num muted">${r.attempts}</td></tr>`).join('')}
           </tbody></table>
           <h4 class="mini-title">Latest entries</h4>
@@ -944,6 +944,277 @@
     });
     mountForm();
     pageRefresh = () => { if (itemOf(current).item) drawToday(); else renderRecord(); };
+  }
+
+  /* =========================================================
+   * Shooter history & progress
+   * ======================================================= */
+  function historyHref(name, memberId) {
+    const m = (memberId && Store.get('members', memberId))
+      || Store.all('members').find(x => shooterKey(x.name) === shooterKey(name));
+    return m ? `#/history/${encodeURIComponent(m.id)}` : `#/history/guest/${encodeURIComponent(String(name || '').trim())}`;
+  }
+  function shooterLink(name, memberId) {
+    return `<a class="shooter-link" href="${historyHref(name, memberId)}">${esc(name)}</a>`;
+  }
+  function niceStep(raw) {
+    const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+    const n = raw / pow;
+    return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * pow;
+  }
+
+  // Line chart of a shooter's best time per range day, with an optional par line.
+  // Single series, so no legend; hover/tap shows the day's details.
+  function drawTrend(el, sessions, par) {
+    const W = Math.max(260, el.clientWidth), H = 180;
+    const pad = { l: 40, r: 16, t: 22, b: 26 };
+    const xs = sessions.map(s => parseISO(s.date).getTime());
+    let x0 = Math.min(...xs), x1 = Math.max(...xs);
+    if (x0 === x1) { x0 -= 864e5; x1 += 864e5; }
+    const vals = sessions.map(s => s.best).concat(par ? [par] : []);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const span = (hi - lo) || hi * 0.2 || 1;
+    lo = Math.max(0, lo - span * 0.2);
+    hi += span * 0.2;
+    const step = niceStep((hi - lo) / 3);
+    const dec = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+    const ticks = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ticks.push(v);
+    const X = t => pad.l + (t - x0) / (x1 - x0) * (W - pad.l - pad.r);
+    const Y = v => pad.t + (hi - v) / (hi - lo) * (H - pad.t - pad.b);
+    const pts = sessions.map((s, i) => ({ x: X(xs[i]), y: Y(s.best), s }));
+    const pb = pts.reduce((a, b) => (b.s.best < a.s.best ? b : a));
+    const pbAnchor = pb.x > W - 60 ? 'end' : pb.x < pad.l + 30 ? 'start' : 'middle';
+    // The PB is the lowest point, so the space under it is always clear of the line.
+    const pbY = pb.y + 18;
+    const dateLabel = d => parseISO(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const first = sessions[0], last = sessions[sessions.length - 1];
+
+    el.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+        aria-label="Best time per range day, ${sessions.length} days, personal best ${fmtTime(pb.s.best)} seconds">
+      <g class="grid">${ticks.map(v => `<line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(v)}" y2="${Y(v)}"/>`).join('')}</g>
+      <g class="axis">${ticks.map(v => `<text x="${pad.l - 8}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(dec)}</text>`).join('')}
+        <text x="${pts[0].x}" y="${H - 6}" text-anchor="${sessions.length > 1 ? 'start' : 'middle'}">${dateLabel(first.date)}</text>
+        ${sessions.length > 1 ? `<text x="${pts[pts.length - 1].x}" y="${H - 6}" text-anchor="end">${dateLabel(last.date)}</text>` : ''}
+      </g>
+      ${par ? `<line class="par-line" x1="${pad.l}" x2="${W - pad.r}" y1="${Y(par)}" y2="${Y(par)}"/>
+        <text class="par-label" x="${W - pad.r}" y="${Y(par) - 5}" text-anchor="end">Par ${fmtTime(par)}</text>` : ''}
+      <path class="trend-line" d="${pts.map((p, i) => (i ? 'L' : 'M') + p.x + ',' + p.y).join(' ')}"/>
+      <line class="crosshair" y1="${pad.t}" y2="${H - pad.b}" visibility="hidden"/>
+      ${pts.map((p, i) => `<circle class="trend-dot${p === pb ? ' pb' : ''}" data-i="${i}" cx="${p.x}" cy="${p.y}" r="${p === pb ? 5.5 : 4}"/>`).join('')}
+      <text class="pb-label" x="${pb.x}" y="${pbY}" text-anchor="${pbAnchor}">PB ${fmtTime(pb.s.best)}</text>
+      <rect class="hover-zone" x="${pad.l - 10}" y="0" width="${W - pad.l - pad.r + 20}" height="${H}"/>
+    </svg><div class="chart-tip" hidden></div>`;
+
+    const svg = $('svg', el), tip = $('.chart-tip', el), cross = $('.crosshair', el);
+
+    // If the par label lands on the PB label, move it to the left end of the par line.
+    const parLabel = $('.par-label', el), pbLabel = $('.pb-label', el);
+    if (parLabel) {
+      const a = parLabel.getBBox(), b = pbLabel.getBBox();
+      if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+        parLabel.setAttribute('x', pad.l + 4);
+        parLabel.setAttribute('text-anchor', 'start');
+      }
+    }
+    function show(e) {
+      const r = svg.getBoundingClientRect();
+      const px = e.clientX - r.left;
+      let best = 0;
+      pts.forEach((p, i) => { if (Math.abs(p.x - px) < Math.abs(pts[best].x - px)) best = i; });
+      const p = pts[best];
+      cross.setAttribute('x1', p.x); cross.setAttribute('x2', p.x); cross.setAttribute('visibility', 'visible');
+      $$('.trend-dot', el).forEach(d => d.classList.toggle('on', +d.dataset.i === best));
+      tip.innerHTML = `<strong>${fmtDate(p.s.date)}</strong><span>Best ${fmtTime(p.s.best)}s${par ? ' · ' + vsPar(p.s.best, par) : ''}</span>
+        <span class="muted">${p.s.count} run${p.s.count === 1 ? '' : 's'} that day</span>`;
+      tip.hidden = false;
+      const tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(W - tw, p.x - tw / 2)) + 'px';
+      tip.style.top = Math.max(0, p.y - tip.offsetHeight - 14) + 'px';
+    }
+    function hide() {
+      tip.hidden = true;
+      cross.setAttribute('visibility', 'hidden');
+      $$('.trend-dot', el).forEach(d => d.classList.remove('on'));
+    }
+    const zone = $('.hover-zone', el);
+    zone.addEventListener('pointermove', show);
+    zone.addEventListener('pointerdown', show);
+    zone.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') hide(); });
+  }
+
+  function renderHistory(m) {
+    const isGuest = !!(m && /\/guest\//.test(m[0]));
+    const param = m && m[1] ? decodeURIComponent(m[1]) : null;
+
+    const render = () => {
+      const list = members();
+      let who = null;
+      if (isGuest) who = { name: param, memberId: null };
+      else if (param) {
+        const mm = Store.get('members', param);
+        if (mm) who = { name: mm.name, memberId: mm.id };
+      } else {
+        // No one picked yet: start with whoever last recorded on this phone, else the first member.
+        const mm = list.find(x => shooterKey(x.name) === shooterKey(getShooter())) || list[0];
+        if (mm) who = { name: mm.name, memberId: mm.id };
+      }
+      const guests = knownShooters().filter(n => !list.some(x => shooterKey(x.name) === shooterKey(n)));
+      const picker = `<select id="who-pick" aria-label="Choose a shooter">
+        ${who ? '' : '<option value="">Choose a shooter…</option>'}
+        ${list.length ? `<optgroup label="Members">${list.map(x => `<option value="${historyHref(x.name, x.id)}"${who && who.memberId === x.id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>` : ''}
+        ${guests.length ? `<optgroup label="Guests">${guests.map(n => `<option value="${historyHref(n)}"${who && !who.memberId && shooterKey(who.name) === shooterKey(n) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</optgroup>` : ''}
+      </select>`;
+      const head = `<a class="back" href="#/members">← Members</a>
+        <div class="page-head history-head"><div><p class="eyebrow">Shooter history</p><h1>${who ? esc(who.name) : 'History'}</h1></div>
+        <label class="who-label">Shooter ${picker}</label></div>`;
+
+      if (!who) {
+        app.innerHTML = head + emptyState('📈', 'No shooters yet', 'Add members and record some times to see their progress here.', '<a class="btn primary" href="#/members">Go to members</a>');
+        bindPicker();
+        return;
+      }
+
+      const key = shooterKey(who.name);
+      const runs = Store.all('times').filter(r => {
+        if (who.memberId && r.memberId === who.memberId) return true;
+        // Runs saved by name (before the member existed, or for guests).
+        return shooterKey(r.shooter) === key && (!r.memberId || !Store.get('members', r.memberId));
+      });
+
+      if (!runs.length) {
+        app.innerHTML = head + emptyState('⏱', `No times for ${esc(who.name)} yet`, 'Once they record a drill or stage, their progress shows up here.', '<a class="btn primary" href="#/record">Record a time</a>');
+        bindPicker();
+        return;
+      }
+
+      // ---- per drill / stage ----
+      const groups = new Map();
+      runs.forEach(r => {
+        const k = r.kind + ':' + r.itemId;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      });
+      let recordsHeld = 0;
+      const items = [...groups.values()].map(list2 => {
+        const r0 = list2[0];
+        const item = itemFor(r0.kind, r0.itemId);
+        const par = r0.kind === 'drill' ? num(item ? item.par : r0.par) : null;
+        const byDay = new Map();
+        list2.forEach(r => {
+          const d = byDay.get(r.date) || { date: r.date, best: Infinity, count: 0 };
+          d.best = Math.min(d.best, r.time);
+          d.count++;
+          byDay.set(r.date, d);
+        });
+        const sessions = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date));
+        const sorted = list2.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
+        const times = sorted.map(r => r.time);
+        const groupRank = rankRuns(runsFor(r0.kind, r0.itemId));
+        const rank = groupRank.findIndex(g => shooterKey(g.shooter) === key) + 1;
+        if (rank === 1) recordsHeld++;
+        return {
+          kind: r0.kind, id: r0.itemId, exists: !!item, name: item ? item.name : r0.itemName, par, sessions,
+          count: list2.length, best: Math.min(...times),
+          avg: times.reduce((a, b) => a + b, 0) / times.length,
+          latest: sorted[sorted.length - 1],
+          underPar: par ? list2.filter(r => r.time <= par).length : null,
+          rank, of: groupRank.length,
+          change: sessions.length > 1 ? sessions[sessions.length - 1].best - sessions[0].best : null,
+          lastDate: sessions[sessions.length - 1].date,
+        };
+      }).sort((a, b) => b.lastDate.localeCompare(a.lastDate) || a.name.localeCompare(b.name));
+
+      // ---- overall ----
+      const days = new Set(runs.map(r => r.date));
+      const drillRuns = runs.filter(r => r.kind === 'drill');
+      const parFor = r => { const it = itemFor('drill', r.itemId); return num(it ? it.par : r.par); };
+      const parRuns = drillRuns.filter(r => parFor(r));
+      const underParPct = parRuns.length ? Math.round(parRuns.filter(r => r.time <= parFor(r)).length / parRuns.length * 100) : null;
+      const clean = runs.filter(r => !(r.penTime > 0)).length;
+      const penTotals = Store.PENALTIES.map(p => ({ p, n: runs.reduce((sum, r) => sum + ((r.pen || {})[p.key] || 0), 0) })).filter(x => x.n > 0);
+      const penSeconds = runs.reduce((sum, r) => sum + (r.penTime || 0), 0);
+      const recent = runs.slice().sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 30);
+
+      const trend = it => {
+        if (it.change === null) return '<span class="trend flat">Shoot it on another day to see a trend</span>';
+        if (Math.abs(it.change) < 0.005) return '<span class="trend flat">→ Same best as the first day</span>';
+        const faster = it.change < 0;
+        return `<span class="trend ${faster ? 'up' : 'down'}">${faster ? '▼' : '▲'} ${fmtTime(Math.abs(it.change))}s ${faster ? 'faster' : 'slower'} since ${fmtShort(it.sessions[0].date)}</span>`;
+      };
+
+      app.innerHTML = head + `
+        <div class="stats-row history-stats">
+          <div class="stat-card"><span class="value">${runs.length}</span><span class="label">Runs</span></div>
+          <div class="stat-card"><span class="value">${days.size}</span><span class="label">Range days</span></div>
+          <div class="stat-card"><span class="value">${underParPct === null ? '—' : underParPct + '%'}</span><span class="label">Drills under par</span></div>
+          <div class="stat-card"><span class="value">${Math.round(clean / runs.length * 100)}%</span><span class="label">Clean runs</span></div>
+          ${recordsHeld ? `<div class="stat-card gold"><span class="value">🏆 ${recordsHeld}</span><span class="label">Group record${recordsHeld === 1 ? '' : 's'} held</span></div>` : ''}
+        </div>
+
+        <h2 class="section-title">Progress by drill &amp; stage</h2>
+        <div class="grid progress-grid">
+          ${items.map((it, i) => `<div class="card progress-card">
+            <div class="result-head">
+              <h3>${it.exists ? `<a href="#/${it.kind}s/${esc(it.id)}">${esc(it.name)}</a>` : esc(it.name)}</h3>
+              <span class="kind ${it.kind}">${it.kind === 'drill' ? 'Drill' : 'Stage'}</span>
+            </div>
+            ${trend(it)}
+            <div class="mini-stats">
+              <div><span class="label">Best</span><span class="value">${fmtTime(it.best)}</span></div>
+              <div><span class="label">Average</span><span class="value">${fmtTime(it.avg)}</span></div>
+              <div><span class="label">Latest</span><span class="value">${fmtTime(it.latest.time)}</span></div>
+              <div><span class="label">Rank</span><span class="value">${it.rank ? `${it.rank === 1 ? '🏆 ' : ''}#${it.rank}<small> of ${it.of}</small>` : '—'}</span></div>
+            </div>
+            ${it.sessions.length > 1 ? `<div class="chart-caption">Best time each range day${it.par ? ' · lower is faster' : ' (seconds, lower is faster)'}</div><div class="trend-chart" data-chart="${i}"></div>` : ''}
+            <p class="muted small">${it.count} run${it.count === 1 ? '' : 's'} over ${it.sessions.length} day${it.sessions.length === 1 ? '' : 's'}${it.par ? ` · ${it.underPar} under par (${Math.round(it.underPar / it.count * 100)}%)` : ''}</p>
+          </div>`).join('')}
+        </div>
+
+        <div class="two-col even">
+          <div class="card">
+            <h3>Penalties</h3>
+            ${penTotals.length ? `
+              <p class="muted small">${fmtTime(penSeconds)}s of penalties over ${runs.length} runs, an average of ${fmtTime(penSeconds / runs.length)}s per run.</p>
+              <table class="table"><thead><tr><th>Type</th><th class="num">Count</th><th class="num">Per run</th></tr></thead><tbody>
+              ${penTotals.sort((a, b) => b.n - a.n).map(x => `<tr><td>${x.p.label}</td><td class="num strong">${x.n}</td><td class="num">${(x.n / runs.length).toFixed(2)}</td></tr>`).join('')}
+              </tbody></table>`
+            : '<p class="muted">No penalties recorded. 🎯</p>'}
+          </div>
+          <div class="card">
+            <h3>Recent runs <span class="count">${runs.length}</span></h3>
+            <div class="scroll"><table class="table"><thead><tr><th>Date</th><th>Drill / stage</th><th class="num">Time</th></tr></thead><tbody>
+            ${recent.map(r => {
+              const it = itemFor(r.kind, r.itemId);
+              const par = r.kind === 'drill' ? num(it ? it.par : r.par) : null;
+              return `<tr><td><a href="#/day/${r.date}">${fmtShort(r.date)}</a></td>
+                <td>${esc(it ? it.name : r.itemName)}${par ? `<span class="sub">${vsPar(r.time, par)} vs par</span>` : ''}</td>
+                <td class="num">${timeCell(r)}</td></tr>`;
+            }).join('')}
+            </tbody></table></div>
+            ${runs.length > recent.length ? `<p class="muted small">Showing the latest ${recent.length}.</p>` : ''}
+          </div>
+        </div>`;
+
+      bindPicker();
+      drawCharts();
+      function drawCharts() {
+        $$('.trend-chart').forEach(el => { const it = items[+el.dataset.chart]; drawTrend(el, it.sessions, it.par); });
+      }
+      redraw = drawCharts;
+    };
+
+    function bindPicker() {
+      $('#who-pick').addEventListener('change', e => { if (e.target.value) location.hash = e.target.value; });
+    }
+
+    let redraw = null;
+    let resizeTimer = null;
+    const onResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => redraw && redraw(), 150); };
+    window.addEventListener('resize', onResize);
+    pageCleanup = () => window.removeEventListener('resize', onResize);
+    render();
+    pageRefresh = render;
   }
 
   /* =========================================================
@@ -972,7 +1243,7 @@
       };
 
       app.innerHTML = `
-        <div class="page-head"><div><p class="eyebrow">Members</p><h1>Members</h1></div></div>
+        <div class="page-head"><div><p class="eyebrow">Members</p><h1>Members</h1></div>${list.length ? '<a class="btn primary" href="#/history">📈 View history</a>' : ''}</div>
         <div class="two-col">
           <div class="stack">
             <form class="card" id="member-form" autocomplete="off">
@@ -992,11 +1263,12 @@
             ${list.length ? `<table class="table"><thead><tr><th>Name</th><th class="num">Runs</th><th>Last shot</th><th></th></tr></thead><tbody>
               ${list.map(m => {
                 const st = statsFor(m.name);
-                return `<tr><td class="strong">${esc(m.name)}</td><td class="num">${st.runs}</td>
+                return `<tr><td class="strong"><a class="shooter-link" href="${historyHref(m.name, m.id)}">${esc(m.name)}</a></td><td class="num">${st.runs}</td>
                   <td>${st.last ? `<a href="#/day/${st.last}">${fmtShort(st.last)}</a>` : '<span class="muted">—</span>'}</td>
                   <td class="num"><button class="icon-btn" data-del-member="${esc(m.id)}" title="Remove ${esc(m.name)}" aria-label="Remove ${esc(m.name)}">×</button></td></tr>`;
               }).join('')}
             </tbody></table>` : '<p class="muted">No members yet. Add your group so their names show up in a dropdown when recording times.</p>'}
+            ${list.length ? '<p class="muted small">Tap a name to see their history and progress.</p>' : ''}
           </div>
         </div>`;
 
@@ -1079,6 +1351,9 @@
     [/^#\/record\/?$/, renderRecord],
     [/^#\/record\/((?:drill|stage):[^/]+)$/, renderRecord],
     [/^#\/members\/?$/, renderMembers],
+    [/^#\/history\/?$/, renderHistory],
+    [/^#\/history\/guest\/(.+)$/, renderHistory],
+    [/^#\/history\/([^/]+)$/, renderHistory],
     [/^#\/settings\/?$/, renderSettings],
   ];
 
@@ -1087,7 +1362,8 @@
     pageCleanup = null;
     pageRefresh = null;
     const hash = location.hash || '#/';
-    const section = ['drills', 'stages', 'record', 'members', 'settings'].find(s => hash.startsWith('#/' + s)) || 'day';
+    const section = hash.startsWith('#/history') ? 'members'
+      : ['drills', 'stages', 'record', 'members', 'settings'].find(s => hash.startsWith('#/' + s)) || 'day';
     $$('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === section));
     window.scrollTo(0, 0);
     for (const [re, fn] of routes) {

@@ -5,6 +5,7 @@ A simple website for our church shooting group:
 - **Day View**: everyone's times for a given day, the fastest shooter on each drill and stage, and who won the most.
 - **Drills**: a silhouette target where you mark shot placement with X's, plus instructions and a par time. Shooters record their times and see how they compare to par.
 - **Stages**: an overhead range bay where you drag in targets, steel, no-shoots, barrels, walls and shooting boxes, and draw arrows to show the route to move. Each target can have a note on where to shoot and how many shots. Shooters record their stage times.
+- **Shooter history**: each shooter's progress on every drill and stage: personal best, average, group rank, improvement since their first day, a chart of their best time each range day, and their penalty habits.
 - **Members**: the group roster. Members appear in a dropdown when recording times, with a "Guest" option for visitors.
 - **Penalties**: C-zone hits, D-zone hits and misses (plus no-shoots and procedurals on stages) are added to the raw time automatically. You set how many seconds each one costs on the **Settings** page.
 
@@ -87,10 +88,15 @@ To update the site later, upload the changed files to the repository again.
 
 - **Members:** add everyone on the **Members** page. If people recorded times before you set up members, the page lists those names so you can add them with one click.
 - **Recording a time:** open a drill or stage, pick the shooter, enter the raw time from the timer, and tap **+** for any C-zone hits, D-zone hits or misses. The form shows the final time (raw time + penalties) before you save. The site remembers the last shooter picked on that device. The date defaults to today, so you can also enter times after the fact.
+- **History & progress:** on the **Members** page, tap a name (or **📈 View history**) to see that shooter's progress. Shooter names in results tables also link to their history. Tap a point on a chart to see that day's details.
 - **Penalty values (Settings, the sliders icon):** the defaults are C = 1 s, D = 3 s, miss = 5 s, no-shoot = 5 s, procedural = 3 s. Set any of them to 0 to turn it off; it then disappears from the record form. Changes apply to new times only. Saved times keep the penalties they were scored with, so old results don't shift.
 - **Drills:** tap the target to place X's and tap an X to remove it. The round count fills in from the number of X's unless you type your own.
 - **Stages:** use the **Add** toolbar, then drag objects into place. Tap an object to edit its label, shot count, notes, rotation (any angle from 0–359°, using the slider, the ±15° buttons or by typing the degrees) or size. To show the shooter's route, tap **Draw route** and press and drag on the map. When you let go, the line becomes an arrow pointing where you finished. Draw as many as you need, then tap **Done drawing**. Tap an arrow to change its color, make it dashed, flip its direction or add a note (e.g. "reload on the move"). With a keyboard, arrow keys nudge the selected object (Shift moves farther) and Delete removes it. The bay is drawn 30 yd wide × 20 yd deep, with downrange at the top.
 - **Day View:** this is the home page. Use the arrows, the date picker or the "Range days" chips to look at other days. Rankings use each shooter's best run of the day.
+
+## Trying things out safely
+
+Add `?demo` to the address (for example `https://tleggett68.github.io/rangelog/?demo`) to use the site on sample data saved only in your own browser. Nothing you do there touches the group's real data.
 
 ## Good to know
 
