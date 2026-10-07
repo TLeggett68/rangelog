@@ -96,7 +96,7 @@ To update the site later, upload the changed files to the repository again.
 
 ## Updates
 
-When a new version is published, the site notices within about a minute of being opened or switched back to. If you haven't started typing, it reloads itself; otherwise a bar appears at the bottom with a **Refresh** button. To force it immediately on a computer, press **Cmd + Shift + R** (Mac) or **Ctrl + Shift + R** (Windows).
+When a new version is published, the site notices within about a minute of being opened or switched back to. If you haven't started typing, it reloads itself; otherwise a bar appears at the bottom with a **Refresh** button. To force it immediately on a computer, reload while skipping saved copies: **Safari** (Mac): **Cmd + Option + R**. **Chrome / Edge / Firefox**: **Cmd + Shift + R** on a Mac, **Ctrl + Shift + R** on Windows. (In Safari, Cmd + Shift + R opens Reader view instead; press it again to close it.)
 
 The version number in `js/version.js` is updated automatically on every commit by a git hook in this folder (`.git/hooks/pre-commit`).
 
