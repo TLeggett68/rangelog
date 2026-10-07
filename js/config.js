@@ -11,15 +11,12 @@
 window.GROUP_NAME = 'NHCSG Range Log';
 window.GROUP_TAGLINE = 'Church Shooting Group';
 
-window.FIREBASE_CONFIG = null;
-
-/* Example — replace null above with something like this:
+// Public project identifiers (not secrets). Access is controlled by firestore.rules.
 window.FIREBASE_CONFIG = {
-  apiKey: "AIza...",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project",
-  storageBucket: "your-project.appspot.com",
-  messagingSenderId: "1234567890",
-  appId: "1:1234567890:web:abc123"
+  apiKey: "AIzaSyDiRlDa3zV5j32XA14UgedrIpuOa7uHyE8",
+  authDomain: "nhcsc-4bb1a.firebaseapp.com",
+  projectId: "nhcsc-4bb1a",
+  storageBucket: "nhcsc-4bb1a.firebasestorage.app",
+  messagingSenderId: "1066473411608",
+  appId: "1:1066473411608:web:022a2b89559afface15f6d"
 };
-*/
