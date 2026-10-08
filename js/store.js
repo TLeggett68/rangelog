@@ -39,7 +39,18 @@
     rangeDay: null,
   };
 
-  const cache = { drills: [], stages: [], times: [], members: [], settings: {} };
+  const cache = { drills: [], stages: [], times: [], members: [], settings: {}, admin: {} };
+
+  /*
+   * Admin: one signed-in account (Firebase email/password) can read and change admin/roster,
+   * which holds { waivers: { memberId: 'YYYY-MM-DD' | null }, rsvps: { 'YYYY-MM-DD': { memberId: bool } } }.
+   * Firestore rules allow only the admin's UID. In demo mode "signing in" just flips a flag.
+   */
+  const DEMO_ADMIN_KEY = 'rangelog-demo-admin';
+  const adminState = { signedIn: false, email: null, isAdmin: false, error: null };
+  let auth = null;
+  let adminUnsub = null;
+  let authLoaded = null; // promise, cloud mode
   const listeners = [];
   let db = null;
   let rawRuns = new Map(); // cloud: run id -> { date, raw } (raw is needed for arrayRemove)
@@ -81,10 +92,14 @@
   function fillCache(data) {
     COLLECTIONS.forEach(c => { cache[c] = data && Array.isArray(data[c]) ? data[c] : []; });
     cache.settings = (data && data.settings) || {};
+    cache.admin = (data && data.admin) || {};
   }
   function initLocal() {
     fillCache(readLocal() || sampleData());
     writeLocal();
+    let demoAdmin = false;
+    try { demoAdmin = localStorage.getItem(DEMO_ADMIN_KEY) === '1'; } catch (e) { /* ignore */ }
+    Object.assign(adminState, { signedIn: demoAdmin, email: demoAdmin ? 'demo admin' : null, isAdmin: demoAdmin });
     window.addEventListener('storage', e => {
       if (e.key === LS_KEY) { fillCache(readLocal()); emit(); }
     });
@@ -131,6 +146,34 @@
         if (first) { first = false; resolve(); } else emit();
       });
     })));
+    // Sign-in is only needed for the admin page, so load it after the site is up.
+    authLoaded = loadScript(`https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-auth-compat.js`)
+      .then(watchAuth)
+      .catch(err => { console.error(err); adminState.error = 'Sign-in could not load. Check your connection.'; emit(); });
+  }
+
+  function watchAuth() {
+    auth = firebase.auth();
+    auth.onAuthStateChanged(user => {
+      if (adminUnsub) { adminUnsub(); adminUnsub = null; }
+      cache.admin = {};
+      Object.assign(adminState, { signedIn: !!user, email: user ? user.email : null, isAdmin: false, error: null });
+      if (user) {
+        adminUnsub = db.collection('admin').doc('roster').onSnapshot(doc => {
+          cache.admin = doc.exists ? doc.data() : {};
+          adminState.isAdmin = true;
+          adminState.error = null;
+          emit();
+        }, err => {
+          adminState.isAdmin = false;
+          adminState.error = err.code === 'permission-denied'
+            ? 'This account is not set up as the admin yet (the Firestore rules need its User UID).'
+            : err.message;
+          emit();
+        });
+      }
+      emit();
+    });
   }
 
   /* ---------- public API ---------- */
@@ -221,6 +264,49 @@
       emit();
     },
 
+    /* ---------- admin ---------- */
+    adminState() { return Object.assign({}, adminState, { uid: auth && auth.currentUser ? auth.currentUser.uid : null }); },
+    admin() {
+      const a = cache.admin || {};
+      return { waivers: Object.assign({}, a.waivers || {}), rsvps: JSON.parse(JSON.stringify(a.rsvps || {})) };
+    },
+    async signIn(email, password) {
+      if (mode === 'local') {
+        try { localStorage.setItem(DEMO_ADMIN_KEY, '1'); } catch (e) { /* ignore */ }
+        Object.assign(adminState, { signedIn: true, email: 'demo admin', isAdmin: true, error: null });
+        emit();
+        return;
+      }
+      if (!authLoaded) throw new Error('Sign-in is still loading. Try again in a moment.');
+      await authLoaded;
+      await auth.signInWithEmailAndPassword(email, password);
+    },
+    async signOut() {
+      if (mode === 'local') {
+        try { localStorage.removeItem(DEMO_ADMIN_KEY); } catch (e) { /* ignore */ }
+        Object.assign(adminState, { signedIn: false, email: null, isAdmin: false, error: null });
+        emit();
+        return;
+      }
+      if (auth) await auth.signOut();
+    },
+    // value: 'YYYY-MM-DD' when signed, null when not.
+    setWaiver(memberId, value) { this.saveAdmin({ waivers: { [memberId]: value } }); },
+    setRsvp(date, memberId, going) { this.saveAdmin({ rsvps: { [date]: { [memberId]: !!going } } }); },
+    // Deep-merges a partial { waivers, rsvps } into admin/roster.
+    saveAdmin(partial) {
+      const a = cache.admin || {};
+      if (partial.waivers) a.waivers = Object.assign({}, a.waivers || {}, partial.waivers);
+      if (partial.rsvps) {
+        a.rsvps = Object.assign({}, a.rsvps || {});
+        Object.keys(partial.rsvps).forEach(d => { a.rsvps[d] = Object.assign({}, a.rsvps[d] || {}, partial.rsvps[d]); });
+      }
+      cache.admin = a;
+      if (mode === 'local') writeLocal();
+      else db.collection('admin').doc('roster').set(plain(Object.assign({}, partial, { updatedAt: Date.now() })), { merge: true }).catch(writeFailed);
+      emit();
+    },
+
     resetDemo() {
       if (mode !== 'local') return;
       fillCache(sampleData());
@@ -273,6 +359,10 @@
       ],
       members: ['John', 'Mike', 'Sarah'].map((name, i) => ({ id: 'demo-m' + i, name, createdAt: now,
         goals: name === 'John' ? { 'drill:demo-bill': 2.1 } : undefined })),
+      admin: {
+        waivers: { 'demo-m0': d1, 'demo-m2': d1 },
+        rsvps: { [d0]: { 'demo-m0': true, 'demo-m1': true, 'demo-m2': true } },
+      },
       settings: {
         rangeDay: {
           date: d0, note: '9 AM at Bay 3. Bring 150 rounds, eye and ear protection.',

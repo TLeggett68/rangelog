@@ -1749,11 +1749,23 @@
         </div>
 
         <div class="card settings-card">
+          <h3>Admin</h3>
+          ${Store.adminState().isAdmin
+            ? `<p class="muted">Signed in as ${esc(Store.adminState().email)}.</p>
+               <div class="actions"><a class="btn primary" href="#/admin">✅ Waivers &amp; RSVPs</a><button class="btn" type="button" id="settings-sign-out">Sign out</button></div>`
+            : `<p class="muted">Track who has signed the range waiver and who's coming to each range day.</p>
+               <a class="btn" href="#/admin">🔒 Admin sign in</a>`}
+        </div>
+
+        <div class="card settings-card">
           <h3>Range day</h3>
           <p class="muted">Set the next range day, what you'll shoot and the shooting order.</p>
           <a class="btn" href="#/plan">📋 Open range day plan</a>
         </div>
       </div>`;
+
+    const so = $('#settings-sign-out');
+    if (so) so.addEventListener('click', () => Store.signOut().then(() => { toast('Signed out'); renderSettings(); }));
 
     // ---- penalties ----
     const form = $('#settings-form');
@@ -1840,6 +1852,7 @@
     $('#export-json').addEventListener('click', () => {
       const data = { exported: new Date().toISOString(), settings: Store.settings() };
       ['drills', 'stages', 'members', 'times'].forEach(c => { data[c] = Store.all(c); });
+      if (Store.adminState().isAdmin) data.adminRoster = Store.admin();
       download(`range-log-backup-${today()}.json`, JSON.stringify(data, null, 2), 'application/json');
       toast('Backup downloaded');
     });
@@ -1863,6 +1876,13 @@
       ${rd.note ? `<p class="rd-note">${nl2br(rd.note)}</p>` : ''}
       ${items.length ? `<div class="rd-items">${items.map((x, i) => `<a class="chip" href="#/${x.kind}s/${esc(x.id)}">${i + 1}. ${esc(x.item.name)}</a>`).join('')}</div>` : ''}
       ${names.length ? `<p class="muted small">Shooting order: ${names.map(esc).join(', ')}</p>` : ''}
+      ${(() => {
+        if (!Store.adminState().isAdmin) return '';
+        const a = Store.admin();
+        const going = members().filter(x => (a.rsvps[rd.date] || {})[x.id]);
+        const missing = going.filter(x => !a.waivers[x.id]).length;
+        return `<a class="admin-line" href="#/admin/${rd.date}">🔒 Admin: ${going.length} coming${missing ? ` · <b>⚠️ ${missing} need${missing === 1 ? 's' : ''} a waiver</b>` : ' · all have waivers'} ›</a>`;
+      })()}
       ${isToday && (items.length || names.length) ? '<a class="btn primary" href="#/record">⏱ Start recording</a>' : ''}
     </div>`;
   }
@@ -2229,6 +2249,131 @@
   }
 
   /* =========================================================
+   * Admin: waivers (signed with the range) and RSVPs for range days.
+   * Only the signed-in admin can read or change this; Firestore rules enforce it.
+   * ======================================================= */
+  function authMessage(err) {
+    const code = (err && err.code) || '';
+    if (/invalid-credential|wrong-password|user-not-found|invalid-email|invalid-login/.test(code)) return 'Email or password is incorrect.';
+    if (/too-many-requests/.test(code)) return 'Too many tries. Wait a few minutes and try again.';
+    if (/network/.test(code)) return 'No connection. Check your signal and try again.';
+    return (err && err.message) || 'Could not sign in.';
+  }
+
+  function adminSignInHTML(st) {
+    if (st.signedIn && !st.isAdmin) {
+      return `<div class="card admin-signin">
+        <h3>Admin</h3>
+        <div class="mode-banner error">${esc(st.error || 'Checking admin access…')}</div>
+        <p class="muted small">Signed in as ${esc(st.email)}.${st.uid ? ` This account's User UID is <code class="uid">${esc(st.uid)}</code>` : ''}</p>
+        <button class="btn" type="button" id="sign-out">Sign out</button>
+      </div>`;
+    }
+    const demo = Store.mode === 'local';
+    return `<form class="card admin-signin" id="sign-in-form" autocomplete="on">
+      <h3>Admin sign in</h3>
+      <p class="muted">For tracking waivers and RSVPs. Group members don't need to sign in.</p>
+      ${demo ? '<p class="hint">Demo mode: no password needed.</p>' : `
+        <label>Email <input name="email" type="email" autocomplete="username" required></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>`}
+      <p class="form-error" id="sign-in-error" hidden></p>
+      <button class="btn primary block" type="submit">Sign in${demo ? ' (demo)' : ''}</button>
+    </form>`;
+  }
+
+  function bindAdminAuth() {
+    const out = $('#sign-out');
+    if (out) out.addEventListener('click', () => Store.signOut().then(() => toast('Signed out')));
+    const form = $('#sign-in-form');
+    if (!form) return;
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = $('button[type="submit"]', form);
+      const errEl = $('#sign-in-error');
+      btn.disabled = true;
+      errEl.hidden = true;
+      try {
+        await Store.signIn(form.elements.email ? form.elements.email.value.trim() : '', form.elements.password ? form.elements.password.value : '');
+      } catch (err) {
+        errEl.textContent = authMessage(err);
+        errEl.hidden = false;
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function renderAdmin(m) {
+    const render = () => {
+      const st = Store.adminState();
+      if (!st.isAdmin) {
+        app.innerHTML = `<div class="page-head"><div><p class="eyebrow">Admin</p><h1>Waivers &amp; RSVPs</h1></div></div>${adminSignInHTML(st)}`;
+        bindAdminAuth();
+        return;
+      }
+      const rd = Store.settings().rangeDay;
+      const date = (m && m[1]) || (rd && rd.date && rd.date >= today() ? rd.date : today());
+      const a = Store.admin();
+      const list = members();
+      const going = a.rsvps[date] || {};
+      const coming = list.filter(x => going[x.id]);
+      const noWaiver = coming.filter(x => !a.waivers[x.id]);
+      const isPlanDay = rd && rd.date === date;
+
+      app.innerHTML = `
+        <div class="page-head"><div><p class="eyebrow">Admin</p><h1>Waivers &amp; RSVPs</h1></div>
+          <div class="actions"><span class="muted small">${esc(st.email)}</span><button class="btn sm" type="button" id="sign-out">Sign out</button></div></div>
+        <div class="card admin-event">
+          <div class="form-row">
+            <label>Range day <input type="date" id="admin-date" value="${date}"></label>
+            <div class="admin-day-note">${isPlanDay ? '📅 This is the planned range day.' : rd && rd.date && rd.date >= today() ? `Planned range day: <a href="#/admin/${rd.date}">${fmtDate(rd.date)}</a>` : ''}</div>
+          </div>
+          <div class="admin-summary">
+            <span class="pill">${coming.length} coming</span>
+            ${noWaiver.length ? `<span class="pill danger">⚠️ ${noWaiver.length} without a waiver: ${noWaiver.map(x => esc(x.name)).join(', ')}</span>`
+              : coming.length ? '<span class="pill">✓ Everyone coming has a waiver</span>' : ''}
+          </div>
+        </div>
+        ${list.length ? `<div class="card">
+          <table class="table admin-table"><thead><tr><th>Member</th><th class="center">Waiver signed</th><th class="center">Coming ${fmtShort(date)}</th></tr></thead><tbody>
+          ${list.map(x => {
+            const w = a.waivers[x.id];
+            const g = !!going[x.id];
+            return `<tr${g && !w ? ' class="warn"' : ''}>
+              <td class="strong">${esc(x.name)}${g && !w ? '<span class="sub warn-text">⚠️ Needs a waiver</span>' : ''}</td>
+              <td class="center"><label class="check-cell"><input type="checkbox" data-waiver="${esc(x.id)}"${w ? ' checked' : ''} aria-label="${esc(x.name)} has signed the waiver">${w ? `<span class="sub">${fmtShort(w)}</span>` : ''}</label></td>
+              <td class="center"><label class="check-cell"><input type="checkbox" data-rsvp="${esc(x.id)}"${g ? ' checked' : ''} aria-label="${esc(x.name)} is coming"></label></td>
+            </tr>`;
+          }).join('')}
+          </tbody></table>
+          <div class="actions admin-actions">
+            <button class="btn sm" type="button" id="to-order"${coming.length ? '' : ' disabled'}>Set shooting order to everyone coming</button>
+            <a class="btn sm" href="#/plan">📋 Range day plan</a>
+          </div>
+        </div>` : emptyState('👥', 'No members yet', 'Add your group on the Members page first.', '<a class="btn primary" href="#/members">Go to members</a>')}`;
+
+      bindAdminAuth();
+      $('#admin-date').addEventListener('change', e => { if (e.target.value) location.hash = '#/admin/' + e.target.value; });
+      $$('[data-waiver]').forEach(cb => cb.addEventListener('change', () => {
+        const mem = Store.get('members', cb.dataset.waiver);
+        if (!cb.checked && !confirm(`Mark ${mem ? mem.name : 'this member'} as NOT having a waiver?`)) { cb.checked = true; return; }
+        Store.setWaiver(cb.dataset.waiver, cb.checked ? today() : null);
+      }));
+      $$('[data-rsvp]').forEach(cb => cb.addEventListener('change', () => Store.setRsvp(date, cb.dataset.rsvp, cb.checked)));
+      const order = $('#to-order');
+      if (order) order.addEventListener('click', () => {
+        const base = isPlanDay ? rd : { date, note: '', items: [] };
+        // Keep the current order for people already in it, then add anyone else who's coming.
+        const ids = coming.map(x => x.id);
+        const shooters = (base.shooters || []).filter(id => ids.includes(id)).concat(ids.filter(id => !(base.shooters || []).includes(id)));
+        Store.saveSettings({ rangeDay: Object.assign({}, base, { shooters }) });
+        toast(isPlanDay ? 'Shooting order updated' : `Range day set for ${fmtShort(date)} with ${shooters.length} shooters`);
+      });
+    };
+    render();
+    pageRefresh = render;
+  }
+
+  /* =========================================================
    * Router, footer, startup
    * ======================================================= */
   const routes = [
@@ -2250,6 +2395,8 @@
     [/^#\/history\/([^/]+)$/, renderHistory],
     [/^#\/settings\/?$/, renderSettings],
     [/^#\/plan\/?$/, renderPlan],
+    [/^#\/admin\/?$/, renderAdmin],
+    [/^#\/admin\/(\d{4}-\d{2}-\d{2})$/, renderAdmin],
     [/^#\/standings\/?$/, renderStandings],
     [/^#\/standings\/(m-\d{4}-\d{2}|y-\d{4}|all)$/, renderStandings],
     [/^#\/timer\/?$/, renderTimer],
@@ -2261,7 +2408,7 @@
     pageCleanup = null;
     pageRefresh = null;
     const hash = location.hash || '#/';
-    const alias = { history: 'members', plan: 'record', timer: 'drills' };
+    const alias = { history: 'members', plan: 'record', timer: 'drills', admin: 'settings' };
     const first = (hash.match(/^#\/([a-z]+)/) || [])[1];
     const section = alias[first] || ['drills', 'stages', 'record', 'members', 'settings', 'standings'].find(x => x === first) || 'day';
     $$('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === section));

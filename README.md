@@ -96,6 +96,16 @@ To update the site later, upload the changed files to the repository again.
 - **Plan a range day:** on the home page tap **📋 Range day plan** (or Settings → Range day). Set the date and a note, add the drills and stages in the order you'll shoot them, and set the shooting order (there's a 🔀 Shuffle button). The home page shows it as **Next range day**.
 - **On the day:** open **Record**. Today's plan is at the top of the drill/stage list. The shooter is picked for you in order and moves to the next person after each save. Tap any name in the order to jump to them. When everyone has shot, **Next: …** moves you to the next item.
 
+### Admin: waivers & RSVPs
+
+**Settings → Admin sign in** opens a page only the admin can use. It lists every member with a **Waiver signed** checkbox (the range keeps the actual waiver; this just tracks who in the group has signed it, and checking it records the date) and a **Coming** checkbox for the selected range day. It warns about anyone coming without a waiver, and **Set shooting order to everyone coming** fills in the range day plan. When the admin is signed in, the home page's range day card shows a quick "coming / need waivers" line.
+
+One-time setup in Firebase (the admin account and a rule that only that account can see this data):
+1. Firebase console → **Authentication** → **Get started** → **Sign-in method** → **Email/Password** → enable → Save.
+2. **Authentication → Users → Add user**: enter the admin's email and a password.
+3. Copy that user's **User UID** (also shown on the site's admin page after signing in).
+4. In `firestore.rules`, replace `ADMIN_UID` with that UID, paste the rules into **Firestore Database → Rules**, and **Publish**. For more than one admin, list several UIDs: `['uid1', 'uid2']`.
+
 ### Scoring, guns and goals
 
 - **Gun types:** pick the gun on the record form (each phone remembers the last one). Tap the **Gun** chips above a leaderboard to show just one gun type. Edit the list in **Settings → Gun types**.
