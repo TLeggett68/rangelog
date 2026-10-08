@@ -480,6 +480,9 @@ code.uid { display: inline-block; background: var(--g50); border: 1px solid var(
 .check-cell { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; margin: 0; cursor: pointer; }
 .check-cell input { width: 26px; height: 26px; margin: 0; accent-color: var(--g600); cursor: pointer; }
 .admin-actions { margin-top: 12px; }
+.admin-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 4px 2px 0; }
+.admin-link { font-size: .82rem; color: var(--muted); text-decoration: none; }
+.admin-link:hover { color: var(--g700); text-decoration: underline; }
 .admin-line { font-size: .88rem; font-weight: 600; text-decoration: none; color: var(--g800); background: var(--g100); border-radius: 8px; padding: 6px 10px; align-self: flex-start; }
 
 /* ---------- shared bits used by the phone layout ---------- */

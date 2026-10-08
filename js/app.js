@@ -1749,18 +1749,17 @@
         </div>
 
         <div class="card settings-card">
-          <h3>Admin</h3>
-          ${Store.adminState().isAdmin
-            ? `<p class="muted">Signed in as ${esc(Store.adminState().email)}.</p>
-               <div class="actions"><a class="btn primary" href="#/admin">✅ Waivers &amp; RSVPs</a><button class="btn" type="button" id="settings-sign-out">Sign out</button></div>`
-            : `<p class="muted">Track who has signed the range waiver and who's coming to each range day.</p>
-               <a class="btn" href="#/admin">🔒 Admin sign in</a>`}
-        </div>
-
-        <div class="card settings-card">
           <h3>Range day</h3>
           <p class="muted">Set the next range day, what you'll shoot and the shooting order.</p>
           <a class="btn" href="#/plan">📋 Open range day plan</a>
+        </div>
+
+        <div class="admin-foot">
+          ${Store.adminState().isAdmin
+            ? `<span class="muted small">Admin: ${esc(Store.adminState().email)}</span>
+               <a class="btn sm" href="#/admin">Waivers &amp; RSVPs</a>
+               <button class="btn sm" type="button" id="settings-sign-out">Sign out</button>`
+            : '<a class="admin-link" href="#/admin">Admin sign in</a>'}
         </div>
       </div>`;
 
