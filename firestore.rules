@@ -45,9 +45,9 @@ service cloud.firestore {
     }
 
     // Admin only: waiver and RSVP tracking (admin/roster). Only the admin's account can read or
-    // change it. ADMIN_UID is the User UID from Firebase console → Authentication → Users.
+    // change it. The list holds admin User UIDs (Firebase console → Authentication → Users).
     match /admin/{doc} {
-      allow read, write: if request.auth != null && request.auth.uid in ['ADMIN_UID'];
+      allow read, write: if request.auth != null && request.auth.uid in ['3wj6gT7sbpQk5dbImtR5YE714OJ3'];
     }
 
     // One document per range day, e.g. days/2026-10-06, holding that day's runs.
