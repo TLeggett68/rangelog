@@ -1670,9 +1670,19 @@
             ${list.length ? `<table class="table"><thead><tr><th>Name</th><th class="num">Runs</th><th>Last shot</th><th></th></tr></thead><tbody>
               ${list.map(m => {
                 const st = statsFor(m.name);
+                if (editing && editing.id === m.id) {
+                  return `<tr class="editing"><td colspan="4">
+                    <form class="rename-form" data-rename="${esc(m.id)}" autocomplete="off">
+                      <input name="name" required maxlength="60" value="${esc(editing.draft)}" autocapitalize="words" autocorrect="off" spellcheck="false" enterkeyhint="done" aria-label="New name for ${esc(m.name)}"${editing.busy ? ' disabled' : ''}>
+                      <button class="btn sm primary" type="submit"${editing.busy ? ' disabled' : ''}>${editing.busy ? 'Saving…' : 'Save'}</button>
+                      <button class="btn sm" type="button" data-rename-cancel${editing.busy ? ' disabled' : ''}>Cancel</button>
+                    </form>
+                    <p class="muted small">Also updates their ${st.runs} past run${st.runs === 1 ? '' : 's'}.</p>
+                  </td></tr>`;
+                }
                 return `<tr><td class="strong"><a class="shooter-link" href="${historyHref(m.name, m.id)}">${esc(m.name)}</a></td><td class="num">${st.runs}</td>
                   <td>${st.last ? `<a href="#/day/${st.last}">${fmtShort(st.last)}</a>` : '<span class="muted">—</span>'}</td>
-                  <td class="num"><button class="icon-btn" data-del-member="${esc(m.id)}" title="Remove ${esc(m.name)}" aria-label="Remove ${esc(m.name)}">×</button></td></tr>`;
+                  <td class="num row-btns"><button class="icon-btn" data-edit-member="${esc(m.id)}" title="Edit ${esc(m.name)}'s name" aria-label="Edit ${esc(m.name)}'s name">✎</button><button class="icon-btn" data-del-member="${esc(m.id)}" title="Remove ${esc(m.name)}" aria-label="Remove ${esc(m.name)}">×</button></td></tr>`;
               }).join('')}
             </tbody></table>` : '<p class="muted">No members yet. Add your group so their names show up in a dropdown when recording times.</p>'}
             ${list.length ? '<p class="muted small">Tap a name to see their history and progress.</p>' : ''}
@@ -1694,11 +1704,53 @@
         const m = Store.get('members', b.dataset.delMember);
         if (m && confirm(`Remove ${m.name} from the member list? Their recorded times will stay.`)) Store.remove('members', m.id);
       }));
+
+      // ---- rename ----
+      $$('[data-edit-member]').forEach(b => b.addEventListener('click', () => {
+        const m = Store.get('members', b.dataset.editMember);
+        if (!m) return;
+        editing = { id: m.id, draft: m.name, busy: false };
+        render();
+      }));
+      const rf = $('.rename-form');
+      if (rf) {
+        const inp = rf.elements.name;
+        if (!editing.busy) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+        inp.addEventListener('input', () => { editing.draft = inp.value; });
+        $('[data-rename-cancel]', rf).addEventListener('click', () => { editing = null; render(); });
+        rf.addEventListener('submit', async e => {
+          e.preventDefault();
+          const m = Store.get('members', rf.dataset.rename);
+          const name = inp.value.trim().replace(/\s+/g, ' ');
+          if (!m || !name) return;
+          if (name === m.name) { editing = null; render(); return; }
+          if (Store.all('members').some(x => x.id !== m.id && shooterKey(x.name) === shooterKey(name))) {
+            toast(`${name} is already a member`);
+            return;
+          }
+          const oldName = m.name;
+          editing.busy = true;
+          render();
+          try {
+            const n = await Store.renameMember(m.id, name);
+            if (shooterKey(getShooter()) === shooterKey(oldName)) setShooter(name);
+            toast(`Renamed ${oldName} to ${name}${n ? ` (and ${n} past run${n === 1 ? '' : 's'})` : ''}`);
+            editing = null;
+          } catch (err) {
+            console.error(err);
+            toast('Could not rename. Check your connection and try again; nothing was half-changed.');
+            editing.busy = false;
+          }
+          render();
+        });
+      }
+
       // Keep the keyboard open after adding someone so several names can be entered in a row.
-      if (refocus || canHover) $('input', form).focus();
+      if (!rf && (refocus || canHover)) $('input', form).focus();
       refocus = false;
     };
     let refocus = false;
+    let editing = null; // { id, draft, busy } while a name is being edited
     render();
     pageRefresh = render;
   }

@@ -264,6 +264,37 @@
       emit();
     },
 
+    /*
+     * Renames a member everywhere: the member record and every past run recorded under them —
+     * runs saved with their member id, plus older runs saved under the old name with no id
+     * (those get linked to the member too). Cloud: each affected range day is rewritten in a
+     * transaction so a time recorded at the same moment isn't lost. Past runs are updated first,
+     * so if this fails partway the member keeps the old name and retrying finishes the job.
+     * Resolves to the number of runs renamed.
+     */
+    async renameMember(id, newName) {
+      const m = cache.members.find(x => x.id === id);
+      if (!m) throw new Error('Member not found.');
+      const oldKey = String(m.name || '').trim().toLowerCase();
+      const matches = r => r.memberId === id || (!r.memberId && String(r.shooter || '').trim().toLowerCase() === oldKey);
+      const renamed = r => (matches(r) ? Object.assign({}, r, { shooter: newName, memberId: id }) : r);
+      const affected = cache.times.filter(matches);
+
+      if (mode === 'cloud') {
+        for (const date of [...new Set(affected.map(r => r.date))]) {
+          const ref = db.collection('days').doc(date);
+          await db.runTransaction(async t => {
+            const snap = await t.get(ref);
+            if (!snap.exists) return;
+            t.update(ref, { runs: (snap.data().runs || []).map(renamed) });
+          });
+        }
+      }
+      cache.times = cache.times.map(renamed);
+      this.update('members', id, { name: newName }); // saves (local) and emits
+      return affected.length;
+    },
+
     /* ---------- admin ---------- */
     adminState() { return Object.assign({}, adminState, { uid: auth && auth.currentUser ? auth.currentUser.uid : null }); },
     admin() {

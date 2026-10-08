@@ -480,6 +480,12 @@ code.uid { display: inline-block; background: var(--g50); border: 1px solid var(
 .check-cell { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; margin: 0; cursor: pointer; }
 .check-cell input { width: 26px; height: 26px; margin: 0; accent-color: var(--g600); cursor: pointer; }
 .admin-actions { margin-top: 12px; }
+.row-btns { white-space: nowrap; }
+.row-btns .icon-btn[data-edit-member] { color: var(--g700); font-size: 1.1rem; }
+.rename-form { display: flex; gap: 6px; align-items: center; }
+.rename-form input { margin: 0; flex: 1; min-width: 0; }
+tr.editing td { background: var(--g50); }
+tr.editing p { margin: 6px 0 0; }
 .admin-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 4px 2px 0; }
 .admin-link { font-size: .82rem; color: var(--muted); text-decoration: none; }
 .admin-link:hover { color: var(--g700); text-decoration: underline; }
@@ -540,7 +546,7 @@ code.uid { display: inline-block; background: var(--g50); border: 1px solid var(
   main { padding-top: 16px; }
   h1 { font-size: 1.55rem; }
   .page-head { margin-bottom: 14px; }
-  .page-head .btn.primary { order: -1; }
+  .page-head .actions .btn.primary { order: -1; }
   .mobile-only { display: inline-flex; }
   .card { padding: 14px; }
   .grid.items, .grid.items.wide { grid-template-columns: 1fr; }

@@ -119,7 +119,7 @@ From **Drills**, or from any drill's page (which fills in that drill's par), tap
 
 ### Everything else
 
-- **Members:** add everyone on the **Members** page. If people recorded times before you set up members, the page lists those names so you can add them with one click.
+- **Members:** add everyone on the **Members** page. Tap **✎** next to a name to rename someone; their past runs are renamed too, so leaderboards and history stay together (needs a connection). If people recorded times before you set up members, the page lists those names so you can add them with one click.
 - **Recording a time:** open a drill or stage, pick the shooter, enter the raw time from the timer, and tap **+** for any C-zone hits, D-zone hits or misses. The form shows the final time (raw time + penalties) before you save. The site remembers the last shooter picked on that device. The date defaults to today, so you can also enter times after the fact.
 - **History & progress:** on the **Members** page, tap a name (or **📈 View history**) to see that shooter's progress. Shooter names in results tables also link to their history. Tap a point on a chart to see that day's details.
 - **Penalty values (Settings, the sliders icon):** the defaults are C = 1 s, D = 3 s, miss = 5 s, no-shoot = 5 s, procedural = 3 s. Set any of them to 0 to turn it off; it then disappears from the record form. Changes apply to new times only. Saved times keep the penalties they were scored with, so old results don't shift.
