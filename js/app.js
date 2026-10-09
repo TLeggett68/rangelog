@@ -2605,6 +2605,9 @@
     { name: '5.56 · 77 gr OTM (16")', mv: 2650, bc: 0.372, model: 'G1', weight: 77, sight: 2.6 },
     { name: '.308 · 168 gr match (20")', mv: 2650, bc: 0.462, model: 'G1', weight: 168, sight: 1.75 },
     { name: '.308 · 150 gr FMJ (20")', mv: 2800, bc: 0.409, model: 'G1', weight: 150, sight: 1.75 },
+    // Hornady ELD Match published specs (24" test barrel); checked against Hornady's own drop tables.
+    { name: '6.5 Creedmoor · 140 gr ELD Match (24")', mv: 2710, bc: 0.326, model: 'G7', weight: 140, sight: 1.75 },
+    { name: '6.5 Creedmoor · 120 gr ELD Match (24")', mv: 2910, bc: 0.245, model: 'G7', weight: 120, sight: 1.75 },
     { name: '300 BLK · 125 gr (16")', mv: 2200, bc: 0.290, model: 'G1', weight: 125, sight: 2.6 },
     { name: '9mm · 115 gr (PCC 16")', mv: 1350, bc: 0.142, model: 'G1', weight: 115, sight: 2.6 },
     { name: '.22 LR · 40 gr (rifle)', mv: 1150, bc: 0.125, model: 'G1', weight: 40, sight: 1.5 },
@@ -2633,12 +2636,12 @@
   function loadFieldsHTML(withWeight) {
     const pr = toolPrefs();
     const l = pr.load || LOADS[0];
-    const preset = pr.load ? pr.preset : '0';
+    const presetIdx = !pr.load ? 0 : typeof pr.preset === 'string' && /^\d+$/.test(pr.preset) ? -1 : LOADS.findIndex(x => x.name === pr.preset);
     return `<div class="card">
       <h3>Your load</h3>
       <label>Start from a typical load <select id="load-preset">
         <option value="">Custom (my own numbers)</option>
-        ${LOADS.map((x, i) => `<option value="${i}"${String(preset) === String(i) ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}
+        ${LOADS.map((x, i) => `<option value="${i}"${presetIdx === i ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}
       </select></label>
       <div class="form-row three">
         <label>Muzzle velocity <span class="input-suffix"><input name="mv" type="number" min="300" max="5000" step="10" inputmode="numeric" value="${esc(l.mv)}"><span>fps</span></span></label>
@@ -2800,7 +2803,7 @@
       const e = form.elements;
       const zero = Math.round(num(e.zero.value) || 0), compare = Math.round(num(e.compare.value) || 0), group = Math.max(0, num(e.group.value) || 0);
       if (!ok || zero < 5) { out.innerHTML = '<div class="card"><p class="muted">Enter a muzzle velocity, ballistic coefficient, sight height and zero distance to see results.</p></div>'; return; }
-      saveToolPrefs({ load, preset: $('#load-preset').value, zeroCalc: { zero, compare: compare || null, group } });
+      saveToolPrefs({ load, preset: (LOADS[+$('#load-preset').value] && $('#load-preset').value !== '') ? LOADS[+$('#load-preset').value].name : '', zeroCalc: { zero, compare: compare || null, group } });
       const maxYd = Math.min(1000, Math.max(400, Math.ceil(Math.max(zero, compare) * 1.25 / 50) * 50));
       const base = { mv: load.mv, bc: load.bc, model: load.model, weight: load.weight, sightHeight: load.sight, maxRange: maxYd };
       const sols = [{ zero, color: SERIES[0] }].concat(compare >= 5 && compare !== zero ? [{ zero: compare, color: SERIES[1] }] : [])
@@ -2899,7 +2902,7 @@
       };
       if (!ok || !(load.weight > 0) || o.zero < 5 || o.maxRange < 50) { out.innerHTML = '<div class="card"><p class="muted">Fill in your load, zero and range to see results.</p></div>'; return; }
       o.maxRange = Math.min(2000, o.maxRange);
-      saveToolPrefs({ load, preset: $('#load-preset').value, ballistic: o });
+      saveToolPrefs({ load, preset: (LOADS[+$('#load-preset').value] && $('#load-preset').value !== '') ? LOADS[+$('#load-preset').value].name : '', ballistic: o });
       const r = Ballistics.solve({ mv: load.mv, bc: load.bc, model: load.model, weight: load.weight, sightHeight: load.sight, zero: o.zero,
         maxRange: o.maxRange, tempF: o.tempF, altitudeFt: o.altitudeFt, windMph: o.windMph, windClock: o.windClock });
       const mil = o.unit === 'MIL';
