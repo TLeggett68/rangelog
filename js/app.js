@@ -421,7 +421,7 @@
           </div>
         </div>
         ${date === today() ? rangeDayCardHTML() : ''}
-        <div class="day-links"><a class="btn sm" href="#/standings">🏆 Season standings</a><a class="btn sm" href="#/plan">📋 Range day plan</a></div>
+        <div class="day-links"><a class="btn sm" href="#/standings">🏆 Season standings</a><a class="btn sm" href="#/plan">📋 Range day plan</a><a class="btn sm" href="#/tools">🧰 Tools</a></div>
         ${dates.length ? `<div class="chips"><span class="muted small">Range days:</span>${dates.slice(0, 12).map(d =>
           `<a class="chip${d === date ? ' active' : ''}" href="#/day/${d}">${fmtDate(d)}</a>`).join('')}</div>` : ''}
         ${divChipsHTML()}
@@ -2596,6 +2596,359 @@
   }
 
   /* =========================================================
+   * Tools: zero calculator, ballistic calculator (and the dry fire timer)
+   * ======================================================= */
+  // Typical factory numbers; everyone should check their own box or chronograph.
+  const LOADS = [
+    { name: '5.56 · 55 gr FMJ (16")', mv: 3100, bc: 0.243, model: 'G1', weight: 55, sight: 2.6 },
+    { name: '5.56 · 62 gr M855 (16")', mv: 2900, bc: 0.304, model: 'G1', weight: 62, sight: 2.6 },
+    { name: '5.56 · 77 gr OTM (16")', mv: 2650, bc: 0.372, model: 'G1', weight: 77, sight: 2.6 },
+    { name: '.308 · 168 gr match (20")', mv: 2650, bc: 0.462, model: 'G1', weight: 168, sight: 1.75 },
+    { name: '.308 · 150 gr FMJ (20")', mv: 2800, bc: 0.409, model: 'G1', weight: 150, sight: 1.75 },
+    { name: '300 BLK · 125 gr (16")', mv: 2200, bc: 0.290, model: 'G1', weight: 125, sight: 2.6 },
+    { name: '9mm · 115 gr (PCC 16")', mv: 1350, bc: 0.142, model: 'G1', weight: 115, sight: 2.6 },
+    { name: '.22 LR · 40 gr (rifle)', mv: 1150, bc: 0.125, model: 'G1', weight: 40, sight: 1.5 },
+  ];
+  const TOOLS_KEY = 'rangelog-tools';
+  const SERIES = ['#15803d', '#2563eb']; // validated pair: your zero (green), comparison (blue, dashed)
+  function toolPrefs() { try { return JSON.parse(localStorage.getItem(TOOLS_KEY) || '{}'); } catch (e) { return {}; } }
+  function saveToolPrefs(p) { try { localStorage.setItem(TOOLS_KEY, JSON.stringify(Object.assign(toolPrefs(), p))); } catch (e) { /* ignore */ } }
+  const signIn = v => (v > 0.04 ? '+' : v < -0.04 ? '−' : '') + Math.abs(v).toFixed(1);
+  const hiLo = v => (Number.isNaN(v) ? '—' : Math.abs(v) < 0.05 ? 'on' : `${Math.abs(v).toFixed(1)} in ${v > 0 ? 'high' : 'low'}`);
+
+  function renderTools() {
+    app.innerHTML = `
+      <div class="page-head"><div><p class="eyebrow">Tools</p><h1>Tools</h1></div></div>
+      <div class="grid tools-grid">
+        <a class="card tool-card" href="#/tools/zero"><span class="tool-icon" aria-hidden="true">🎯</span>
+          <div><h3>Zero calculator</h3><p class="muted">Pick a zero (like 36 or 50 yd) and see where you'll hit at every distance, with your group drawn on targets. Compare two zeros.</p></div></a>
+        <a class="card tool-card" href="#/tools/ballistics"><span class="tool-icon" aria-hidden="true">📈</span>
+          <div><h3>Ballistic calculator</h3><p class="muted">Drop, holds in MOA or MIL, wind drift, velocity and energy out to long range.</p></div></a>
+        <a class="card tool-card" href="#/timer"><span class="tool-icon" aria-hidden="true">⏲</span>
+          <div><h3>Dry fire timer</h3><p class="muted">Random start beep and par beep for dry-fire practice. Dry fire only.</p></div></a>
+      </div>`;
+  }
+
+  // Shared "your load" inputs. Values come from saved prefs, else the first preset.
+  function loadFieldsHTML(withWeight) {
+    const pr = toolPrefs();
+    const l = pr.load || LOADS[0];
+    const preset = pr.load ? pr.preset : '0';
+    return `<div class="card">
+      <h3>Your load</h3>
+      <label>Start from a typical load <select id="load-preset">
+        <option value="">Custom (my own numbers)</option>
+        ${LOADS.map((x, i) => `<option value="${i}"${String(preset) === String(i) ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}
+      </select></label>
+      <div class="form-row three">
+        <label>Muzzle velocity <span class="input-suffix"><input name="mv" type="number" min="300" max="5000" step="10" inputmode="numeric" value="${esc(l.mv)}"><span>fps</span></span></label>
+        <label>Ballistic coeff. <input name="bc" type="number" min="0.05" max="1.5" step="0.001" inputmode="decimal" value="${esc(l.bc)}"></label>
+        <label>Drag model <select name="model"><option${l.model === 'G1' ? ' selected' : ''}>G1</option><option${l.model === 'G7' ? ' selected' : ''}>G7</option></select></label>
+      </div>
+      <div class="form-row three">
+        <label>Sight height <span class="input-suffix"><input name="sight" type="number" min="0" max="6" step="0.05" inputmode="decimal" value="${esc(l.sight)}"><span>in</span></span></label>
+        ${withWeight ? `<label>Bullet weight <span class="input-suffix"><input name="weight" type="number" min="1" max="1000" step="1" inputmode="numeric" value="${esc(l.weight)}"><span>gr</span></span></label>` : '<div></div>'}
+        <div></div>
+      </div>
+      <p class="hint">Presets are typical factory numbers. Your box or a chronograph gives better results. Sight height is center of bore to center of optic (AR with a typical optic ≈ 2.6 in).</p>
+    </div>`;
+  }
+  function readLoad(form) {
+    const e = form.elements;
+    const load = { mv: num(e.mv.value), bc: num(e.bc.value), model: e.model.value, sight: num(e.sight.value), weight: e.weight ? num(e.weight.value) : (toolPrefs().load || LOADS[0]).weight };
+    const ok = load.mv >= 300 && load.mv <= 5000 && load.bc >= 0.05 && load.bc <= 1.5 && load.sight !== null && load.sight >= 0 && load.sight <= 6;
+    return { load, ok };
+  }
+  function bindLoadPreset(form, onChange) {
+    $('#load-preset').addEventListener('change', e => {
+      const l = LOADS[+e.target.value];
+      if (!l || e.target.value === '') return;
+      const el = form.elements;
+      el.mv.value = l.mv; el.bc.value = l.bc; el.model.value = l.model; el.sight.value = l.sight;
+      if (el.weight) el.weight.value = l.weight;
+      onChange();
+    });
+    // Editing a number means it's no longer the preset.
+    ['mv', 'bc', 'model', 'sight', 'weight'].forEach(n => {
+      if (form.elements[n]) form.elements[n].addEventListener('input', () => { $('#load-preset').value = ''; });
+    });
+  }
+
+  // Path chart: inches above/below point of aim vs yards, line of sight at 0. Up to two series
+  // (legend + direct labels when there are two; the second is dashed).
+  function drawPathChart(el, series, maxYd) {
+    const W = Math.max(280, el.clientWidth), H = 220;
+    const pad = { l: 44, r: 16, t: 16, b: 30 };
+    const vals = [0];
+    series.forEach(sr => { for (let yd = 0; yd <= maxYd; yd++) if (!Number.isNaN(sr.path[yd])) vals.push(sr.path[yd]); });
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const span = (hi - lo) || 2;
+    lo -= span * 0.08; hi += span * 0.12;
+    const step = niceStep((hi - lo) / 4);
+    const yt = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) yt.push(v);
+    const xStep = niceStep(maxYd / 5);
+    const xt = [];
+    for (let v = 0; v <= maxYd; v += xStep) xt.push(v);
+    const X = yd => pad.l + yd / maxYd * (W - pad.l - pad.r);
+    const Y = v => pad.t + (hi - v) / (hi - lo) * (H - pad.t - pad.b);
+    const every = Math.max(1, Math.round(maxYd / 200));
+    const pathD = sr => {
+      let d = '';
+      for (let yd = 0; yd <= maxYd; yd += every) { if (!Number.isNaN(sr.path[yd])) d += (d ? 'L' : 'M') + X(yd).toFixed(1) + ',' + Y(sr.path[yd]).toFixed(1); }
+      return d;
+    };
+    const lastYd = sr => { let yd = maxYd; while (yd > 0 && Number.isNaN(sr.path[yd])) yd--; return yd; };
+    el.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bullet path above and below point of aim out to ${maxYd} yards">
+      <g class="grid">${yt.map(v => `<line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(v)}" y2="${Y(v)}"/>`).join('')}</g>
+      <g class="axis">${yt.map(v => `<text x="${pad.l - 8}" y="${Y(v) + 4}" text-anchor="end">${v > 0 ? '+' : ''}${+v.toFixed(2)}</text>`).join('')}
+        ${xt.map((v, i) => `<text x="${X(v)}" y="${H - 10}" text-anchor="${i === xt.length - 1 && X(v) > W - pad.r - 20 ? 'end' : 'middle'}">${v}</text>`).join('')}</g>
+      <line class="los-line" x1="${pad.l}" x2="${W - pad.r}" y1="${Y(0)}" y2="${Y(0)}"/>
+      <text class="los-label" x="${W - pad.r - 4}" y="${Y(0) - 5}" text-anchor="end">Point of aim</text>
+      ${series.map((sr, i) => `<path d="${pathD(sr)}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"${i ? ' stroke-dasharray="6 4"' : ''}/>`).join('')}
+      <line class="crosshair" y1="${pad.t}" y2="${H - pad.b}" visibility="hidden"/>
+      ${series.map(sr => `<circle class="hover-dot" r="4.5" fill="${sr.color}" stroke="#fff" stroke-width="2" visibility="hidden"/>`).join('')}
+      <rect class="hover-zone" x="${pad.l}" y="0" width="${W - pad.l - pad.r}" height="${H}"/>
+    </svg>
+    ${series.length > 1 ? `<div class="chart-legend">${series.map((sr, i) => `<span><svg width="22" height="8" aria-hidden="true"><line x1="0" x2="22" y1="4" y2="4" stroke="${sr.color}" stroke-width="2.5"${i ? ' stroke-dasharray="6 4"' : ''}/></svg>${esc(sr.name)}</span>`).join('')}</div>` : ''}
+    <div class="chart-tip" hidden></div>`;
+    const svg = $('svg', el);
+    if (series.length > 1) {
+      // Direct labels at the end of each line, nudged apart if they'd collide.
+      const ends = series.map(sr => { const yd = lastYd(sr); return { sr, yd, y: Y(sr.path[yd]) }; });
+      if (Math.abs(ends[0].y - ends[1].y) < 14) { const mid = (ends[0].y + ends[1].y) / 2; ends[0].y = mid - 8; ends[1].y = mid + 8; }
+      ends.forEach(o => svg.insertAdjacentHTML('beforeend', `<text class="end-label" x="${X(o.yd) - 4}" y="${o.y - 6}" text-anchor="end">${esc(o.sr.short || o.sr.name)}</text>`));
+    }
+    const tip = $('.chart-tip', el), cross = $('.crosshair', el), dots = $$('.hover-dot', el);
+    const show = e => {
+      const r = svg.getBoundingClientRect();
+      const yd = Math.max(0, Math.min(maxYd, Math.round((e.clientX - r.left - pad.l) / (W - pad.l - pad.r) * maxYd)));
+      cross.setAttribute('x1', X(yd)); cross.setAttribute('x2', X(yd)); cross.setAttribute('visibility', 'visible');
+      series.forEach((sr, i) => {
+        const v = sr.path[yd];
+        if (Number.isNaN(v)) { dots[i].setAttribute('visibility', 'hidden'); return; }
+        dots[i].setAttribute('cx', X(yd)); dots[i].setAttribute('cy', Y(v)); dots[i].setAttribute('visibility', 'visible');
+      });
+      tip.innerHTML = `<strong>${yd} yd</strong>${series.map(sr => Number.isNaN(sr.path[yd]) ? '' : `<span>${series.length > 1 ? esc(sr.short || sr.name) + ': ' : ''}${hiLo(sr.path[yd])}</span>`).join('')}`;
+      tip.hidden = false;
+      const tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(W - tw, X(yd) - tw / 2)) + 'px';
+      tip.style.top = '0px';
+    };
+    const zone = $('.hover-zone', el);
+    zone.addEventListener('pointermove', show);
+    zone.addEventListener('pointerdown', show);
+    zone.addEventListener('pointerleave', e => {
+      if (e.pointerType !== 'mouse') return;
+      tip.hidden = true; cross.setAttribute('visibility', 'hidden'); dots.forEach(d => d.setAttribute('visibility', 'hidden'));
+    });
+  }
+
+  // One small target panel: a fixed 20 × 20 in window, point of aim at the center, the group
+  // (circle) centered where the bullets land. Off-panel impacts show an arrow.
+  function targetPanelHTML(yd, hits, groupMoa) {
+    const WIN = 20, S = 120, scale = S / WIN, c = S / 2;
+    const groupR = Math.max(1.2, groupMoa * 1.0472 * yd / 100 / 2 * scale);
+    let grid = '';
+    for (let i = 2; i < WIN; i += 2) grid += `<line x1="${i * scale}" x2="${i * scale}" y1="0" y2="${S}"/><line x1="0" x2="${S}" y1="${i * scale}" y2="${i * scale}"/>`;
+    const marks = hits.map((h, i) => {
+      if (Number.isNaN(h.path)) return '';
+      const off = Math.abs(h.path) > WIN / 2 - 0.5;
+      const y = c - h.path * scale;
+      return off
+        ? `<text x="${c + (hits.length > 1 ? (i ? 18 : -18) : 0)}" y="${h.path > 0 ? 14 : S - 5}" text-anchor="middle" class="off-arrow" fill="${h.color}">${h.path > 0 ? '▲' : '▼'}</text>`
+        : `<circle cx="${c}" cy="${y}" r="${groupR}" fill="${h.color}" fill-opacity=".14" stroke="${h.color}" stroke-width="1.5"${i ? ' stroke-dasharray="4 3"' : ''}/>
+           <circle cx="${c}" cy="${y}" r="3" fill="${h.color}" stroke="#fff" stroke-width="1.5"/>`;
+    }).reverse().join(''); // comparison first, so your zero draws on top
+    return `<figure class="zero-target">
+      <figcaption>${yd} yd</figcaption>
+      <svg viewBox="0 0 ${S} ${S}" role="img" aria-label="${yd} yards: ${hits.map(h => hiLo(h.path)).join(', ')}">
+        <rect width="${S}" height="${S}" fill="#fbf8f1"/>
+        <g stroke="#e8e1d3" stroke-width="1">${grid}</g>
+        <circle cx="${c}" cy="${c}" r="${3 * scale}" fill="none" stroke="#d6cbb4" stroke-width="1"/>
+        <line x1="${c}" x2="${c}" y1="0" y2="${S}" stroke="#9c8d70" stroke-width="1"/><line x1="0" x2="${S}" y1="${c}" y2="${c}" stroke="#9c8d70" stroke-width="1"/>
+        ${marks}
+      </svg>
+      <div class="zero-readout">${hits.map((h, i) => `<span${hits.length > 1 ? ` class="swatch-text${i ? ' dashed' : ''}" style="--c:${h.color}"` : ''}>${hiLo(h.path)}</span>`).join('')}</div>
+    </figure>`;
+  }
+
+  function renderZeroCalc() {
+    const pr = Object.assign({ zero: 50, compare: 36, group: 2 }, toolPrefs().zeroCalc || {});
+    app.innerHTML = `
+      <a class="back" href="#/tools">← Tools</a>
+      <div class="page-head"><div><p class="eyebrow">Tools</p><h1>Zero calculator</h1></div></div>
+      <form id="tool-form" class="stack tool-form" autocomplete="off" onsubmit="return false">
+        ${loadFieldsHTML(false)}
+        <div class="card">
+          <h3>Zero</h3>
+          <div class="form-row three">
+            <label>Zeroed at <span class="input-suffix"><input name="zero" type="number" min="5" max="1000" step="1" inputmode="numeric" value="${esc(pr.zero)}"><span>yd</span></span></label>
+            <label>Compare with <span class="input-suffix"><input name="compare" type="number" min="5" max="1000" step="1" inputmode="numeric" value="${esc(pr.compare || '')}" placeholder="none"><span>yd</span></span></label>
+            <label>Group size <span class="input-suffix"><input name="group" type="number" min="0" max="20" step="0.5" inputmode="decimal" value="${esc(pr.group)}"><span>MOA</span></span></label>
+          </div>
+          <div class="chips zero-chips"><span class="muted small">Common zeros:</span>${[25, 36, 50, 100, 200].map(z => `<button type="button" class="chip" data-zero="${z}">${z} yd</button>`).join('')}</div>
+        </div>
+      </form>
+      <div id="zero-results" class="tool-results"></div>`;
+
+    const form = $('#tool-form');
+    const out = $('#zero-results');
+    let redraw = null;
+    function run() {
+      const { load, ok } = readLoad(form);
+      const e = form.elements;
+      const zero = Math.round(num(e.zero.value) || 0), compare = Math.round(num(e.compare.value) || 0), group = Math.max(0, num(e.group.value) || 0);
+      if (!ok || zero < 5) { out.innerHTML = '<div class="card"><p class="muted">Enter a muzzle velocity, ballistic coefficient, sight height and zero distance to see results.</p></div>'; return; }
+      saveToolPrefs({ load, preset: $('#load-preset').value, zeroCalc: { zero, compare: compare || null, group } });
+      const maxYd = Math.min(1000, Math.max(400, Math.ceil(Math.max(zero, compare) * 1.25 / 50) * 50));
+      const base = { mv: load.mv, bc: load.bc, model: load.model, weight: load.weight, sightHeight: load.sight, maxRange: maxYd };
+      const sols = [{ zero, color: SERIES[0] }].concat(compare >= 5 && compare !== zero ? [{ zero: compare, color: SERIES[1] }] : [])
+        .map(x => Object.assign(x, { r: Ballistics.solve(Object.assign({}, base, { zero: x.zero })), name: `${x.zero} yd zero`, short: `${x.zero} yd` }));
+      const main = sols[0].r;
+      const dists = [...new Set([7, 15, 25, zero, 50, 100, 150, 200, 250, 300, 400].concat(compare >= 5 ? [compare] : []).filter(d => d <= maxYd))].sort((a, b) => a - b);
+      const panels = [25, 50, 100, 200, 300];
+      // Where the path crosses the line of sight: rising (near) and falling (far). Your zero is one of them.
+      const cross = r => [r.nearZero, r.farZero].filter(v => v != null).map(v => Math.round(v));
+      const crossText = r => { const c = cross(r); return c.length === 2 ? `on at ${c[0]} and ${c[1]} yd` : c.length ? `on at ${c[0]} yd (next crossing past ${maxYd} yd)` : 'never crosses'; };
+      const peak = r => (r.apex && r.apex.path > 0.05 ? `${signIn(r.apex.path)} in at ${r.apex.yd} yd` : 'never above point of aim');
+
+      out.innerHTML = `
+        <div class="stats-row zero-stats">
+          <div class="stat-card${main.nearZero != null && Math.round(main.nearZero) === zero ? ' accent' : ''}"><span class="value">${main.nearZero != null ? Math.round(main.nearZero) + '<small>yd</small>' : '—'}</span><span class="label">Near zero</span></div>
+          <div class="stat-card${main.farZero != null && Math.round(main.farZero) === zero ? ' accent' : ''}"><span class="value">${main.farZero != null ? Math.round(main.farZero) + '<small>yd</small>' : '—'}</span><span class="label">${main.farZero != null ? 'Far zero' : `Far zero past ${maxYd} yd`}</span></div>
+          <div class="stat-card"><span class="value">${main.apex && main.apex.path > 0.05 ? signIn(main.apex.path) + '<small>in</small>' : '—'}</span><span class="label">${main.apex && main.apex.path > 0.05 ? `Highest (${main.apex.yd} yd)` : 'Highest'}</span></div>
+        </div>
+        ${sols.length > 1 ? `<div class="card compare-note">
+          <div><span class="swatch-text" style="--c:${SERIES[0]}">${zero} yd zero</span> ${crossText(main)}, peaks ${peak(main)}</div>
+          <div><span class="swatch-text dashed" style="--c:${SERIES[1]}">${compare} yd zero</span> ${crossText(sols[1].r)}, peaks ${peak(sols[1].r)}</div></div>` : ''}
+        <div class="card">
+          <h3>Where you'll hit</h3>
+          <p class="muted small">Each box is 20 × 20 in with your point of aim at the center (grid every 2 in, ring = 6 in). The circle is a ${fmtSec(group)} MOA group around where the bullets land${sols.length > 1 ? '; dashed = comparison zero' : ''}.</p>
+          <div class="zero-targets">${panels.map(d => targetPanelHTML(d, sols.map(x => ({ path: x.r.path[d], color: x.color })), group)).join('')}</div>
+        </div>
+        <div class="card">
+          <h3>Bullet path</h3>
+          <p class="muted small">Inches above (+) or below (−) your point of aim, by distance in yards. Tap the chart for any distance.</p>
+          <div class="trend-chart path-chart" id="path-chart"></div>
+        </div>
+        <div class="card">
+          <h3>By distance</h3>
+          <div class="scroll"><table class="table"><thead><tr><th>Distance</th>${sols.map(x => `<th class="num">${x.zero} yd zero</th>`).join('')}</tr></thead><tbody>
+          ${dists.map(d => `<tr${d === zero ? ' class="first"' : ''}><td>${d} yd</td>${sols.map(x => `<td class="num">${hiLo(x.r.path[d])}</td>`).join('')}</tr>`).join('')}
+          </tbody></table></div>
+        </div>
+        <p class="muted small tool-note">Standard point-mass model (${load.model} drag, sea level, 59 °F, no wind). Real results vary with your rifle, ammo lot and conditions. Confirm on paper.</p>`;
+      redraw = () => drawPathChart($('#path-chart'), sols.map(x => ({ path: x.r.path, color: x.color, name: x.name, short: x.short })), maxYd);
+      redraw();
+    }
+    let timer = 0;
+    const schedule = () => { clearTimeout(timer); timer = setTimeout(run, 60); };
+    form.addEventListener('input', schedule);
+    form.addEventListener('change', schedule);
+    $$('[data-zero]', form).forEach(b => b.addEventListener('click', () => { form.elements.zero.value = b.dataset.zero; schedule(); }));
+    bindLoadPreset(form, schedule);
+    const onResize = () => redraw && redraw();
+    window.addEventListener('resize', onResize);
+    pageCleanup = () => window.removeEventListener('resize', onResize);
+    run();
+  }
+
+  function renderBallisticCalc() {
+    const pr = Object.assign({ zero: 100, maxRange: 600, step: 50, windMph: 10, windClock: 3, tempF: 59, altitudeFt: 0, unit: 'MOA' }, toolPrefs().ballistic || {});
+    const clockName = h => `${h} o'clock${h === 3 ? ' (from the right)' : h === 9 ? ' (from the left)' : h === 12 ? ' (headwind)' : h === 6 ? ' (tailwind)' : ''}`;
+    app.innerHTML = `
+      <a class="back" href="#/tools">← Tools</a>
+      <div class="page-head"><div><p class="eyebrow">Tools</p><h1>Ballistic calculator</h1></div></div>
+      <form id="tool-form" class="stack tool-form" autocomplete="off" onsubmit="return false">
+        ${loadFieldsHTML(true)}
+        <div class="card">
+          <h3>Zero &amp; range</h3>
+          <div class="form-row three">
+            <label>Zero <span class="input-suffix"><input name="zero" type="number" min="5" max="1000" step="1" inputmode="numeric" value="${esc(pr.zero)}"><span>yd</span></span></label>
+            <label>Out to <span class="input-suffix"><input name="maxRange" type="number" min="50" max="2000" step="50" inputmode="numeric" value="${esc(pr.maxRange)}"><span>yd</span></span></label>
+            <label>Every <select name="step">${[10, 25, 50, 100].map(v => `<option value="${v}"${+pr.step === v ? ' selected' : ''}>${v} yd</option>`).join('')}</select></label>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Conditions</h3>
+          <div class="form-row three">
+            <label>Wind <span class="input-suffix"><input name="windMph" type="number" min="0" max="60" step="1" inputmode="numeric" value="${esc(pr.windMph)}"><span>mph</span></span></label>
+            <label>From <select name="windClock">${[12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(h => `<option value="${h}"${+pr.windClock === h ? ' selected' : ''}>${clockName(h)}</option>`).join('')}</select></label>
+            <label>Holds in <select name="unit"><option${pr.unit === 'MOA' ? ' selected' : ''}>MOA</option><option${pr.unit === 'MIL' ? ' selected' : ''}>MIL</option></select></label>
+          </div>
+          <div class="form-row three">
+            <label>Temperature <span class="input-suffix"><input name="tempF" type="number" min="-40" max="130" step="1" inputmode="numeric" value="${esc(pr.tempF)}"><span>°F</span></span></label>
+            <label>Altitude <span class="input-suffix"><input name="altitudeFt" type="number" min="0" max="15000" step="100" inputmode="numeric" value="${esc(pr.altitudeFt)}"><span>ft</span></span></label>
+            <div></div>
+          </div>
+        </div>
+      </form>
+      <div id="bal-results" class="tool-results"></div>`;
+
+    const form = $('#tool-form');
+    const out = $('#bal-results');
+    let redraw = null;
+    function run() {
+      const { load, ok } = readLoad(form);
+      const e = form.elements;
+      const o = {
+        zero: Math.round(num(e.zero.value) || 0), maxRange: Math.round(num(e.maxRange.value) || 0), step: +e.step.value,
+        windMph: Math.max(0, num(e.windMph.value) || 0), windClock: +e.windClock.value,
+        tempF: num(e.tempF.value) === null ? 59 : num(e.tempF.value), altitudeFt: Math.max(0, num(e.altitudeFt.value) || 0), unit: e.unit.value,
+      };
+      if (!ok || !(load.weight > 0) || o.zero < 5 || o.maxRange < 50) { out.innerHTML = '<div class="card"><p class="muted">Fill in your load, zero and range to see results.</p></div>'; return; }
+      o.maxRange = Math.min(2000, o.maxRange);
+      saveToolPrefs({ load, preset: $('#load-preset').value, ballistic: o });
+      const r = Ballistics.solve({ mv: load.mv, bc: load.bc, model: load.model, weight: load.weight, sightHeight: load.sight, zero: o.zero,
+        maxRange: o.maxRange, tempF: o.tempF, altitudeFt: o.altitudeFt, windMph: o.windMph, windClock: o.windClock });
+      const mil = o.unit === 'MIL';
+      const rows = [];
+      for (let yd = 0; yd <= o.maxRange; yd += o.step) { const w = r.row(yd); if (w) rows.push(w); }
+      if (rows.length && rows[rows.length - 1].yd !== o.maxRange) { const w = r.row(o.maxRange); if (w) rows.push(w); }
+      const hold = v => (Math.abs(v) < 0.05 ? '0' : `${v > 0 ? 'U' : 'D'} ${Math.abs(v).toFixed(1)}`);
+      const drift = inches => (Math.abs(inches) < 0.05 ? '—' : `${Math.abs(inches).toFixed(1)} ${inches > 0 ? 'R' : 'L'}`);
+      const windHold = v => (Math.abs(v) < 0.05 ? '—' : `${v > 0 ? 'L' : 'R'} ${Math.abs(v).toFixed(1)}`); // hold into the wind
+
+      out.innerHTML = `
+        <div class="stats-row zero-stats">
+          <div class="stat-card accent"><span class="value">${o.zero}<small>yd</small></span><span class="label">Zero</span></div>
+          <div class="stat-card"><span class="value">${r.subsonicAt != null ? r.subsonicAt + '<small>yd</small>' : '—'}</span><span class="label">${r.subsonicAt != null ? 'Goes subsonic' : `Supersonic past ${o.maxRange} yd`}</span></div>
+          <div class="stat-card"><span class="value">${Math.round(r.sound)}<small>fps</small></span><span class="label">Speed of sound</span></div>
+        </div>
+        <div class="card">
+          <h3>Bullet path</h3>
+          <p class="muted small">Inches above (+) or below (−) your point of aim, by distance in yards. Tap the chart for any distance.</p>
+          <div class="trend-chart path-chart" id="path-chart"></div>
+        </div>
+        <div class="card">
+          <h3>Range table</h3>
+          <p class="muted small">Hold: U = up, D = down (${o.unit}). Wind: how far it pushes the bullet (R/L) and the hold to correct (into the wind).</p>
+          <div class="scroll"><table class="table bal-table"><thead><tr>
+            <th>Range</th><th class="num">Path (in)</th><th class="num">Hold (${o.unit})</th><th class="num">Wind (in)</th><th class="num">Wind hold</th>
+            <th class="num">Velocity</th><th class="num">Energy</th><th class="num">Time</th></tr></thead><tbody>
+          ${rows.map(w => `<tr${w.yd === o.zero ? ' class="first"' : ''}><td>${w.yd} yd</td>
+            <td class="num strong">${signIn(w.path)}</td><td class="num">${w.yd ? hold(mil ? w.mil : w.moa) : '—'}</td>
+            <td class="num">${w.yd ? drift(w.drift) : '—'}</td><td class="num">${w.yd ? windHold(mil ? w.driftMil : w.driftMoa) : '—'}</td>
+            <td class="num${r.subsonicAt != null && w.yd >= r.subsonicAt ? ' subsonic' : ''}">${Math.round(w.v)} fps</td><td class="num">${Math.round(w.energy)} ft·lb</td><td class="num">${w.tof.toFixed(3)} s</td></tr>`).join('')}
+          </tbody></table></div>
+        </div>
+        <p class="muted small tool-note">Standard point-mass model with ${load.model} drag, ${o.tempF} °F at ${o.altitudeFt} ft${o.windMph ? `, ${o.windMph} mph wind from ${o.windClock} o'clock` : ''}. Doesn't include spin drift, Coriolis or uphill/downhill angles. Real results vary; confirm your holds on paper.</p>`;
+      redraw = () => drawPathChart($('#path-chart'), [{ path: r.path, color: SERIES[0], name: `${o.zero} yd zero` }], o.maxRange);
+      redraw();
+    }
+    let timer = 0;
+    const schedule = () => { clearTimeout(timer); timer = setTimeout(run, 60); };
+    form.addEventListener('input', schedule);
+    form.addEventListener('change', schedule);
+    bindLoadPreset(form, schedule);
+    const onResize = () => redraw && redraw();
+    window.addEventListener('resize', onResize);
+    pageCleanup = () => window.removeEventListener('resize', onResize);
+    run();
+  }
+
+  /* =========================================================
    * Router, footer, startup
    * ======================================================= */
   const routes = [
@@ -2622,6 +2975,9 @@
     [/^#\/standings\/?$/, renderStandings],
     [/^#\/standings\/(m-\d{4}-\d{2}|y-\d{4}|all)$/, renderStandings],
     [/^#\/timer\/?$/, renderTimer],
+    [/^#\/tools\/?$/, renderTools],
+    [/^#\/tools\/zero$/, renderZeroCalc],
+    [/^#\/tools\/ballistics$/, renderBallisticCalc],
     [/^#\/timer\/(drill:[^/]+)$/, renderTimer],
   ];
 
@@ -2630,9 +2986,9 @@
     pageCleanup = null;
     pageRefresh = null;
     const hash = location.hash || '#/';
-    const alias = { history: 'members', plan: 'record', timer: 'drills', admin: 'settings' };
+    const alias = { history: 'members', plan: 'record', timer: 'tools', admin: 'settings' };
     const first = (hash.match(/^#\/([a-z]+)/) || [])[1];
-    const section = alias[first] || ['drills', 'stages', 'record', 'members', 'settings', 'standings'].find(x => x === first) || 'day';
+    const section = alias[first] || ['drills', 'stages', 'record', 'members', 'settings', 'standings', 'tools'].find(x => x === first) || 'day';
     $$('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === section));
     window.scrollTo(0, 0);
     for (const [re, fn] of routes) {

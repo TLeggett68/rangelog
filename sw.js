@@ -10,10 +10,10 @@
  * - Fonts and the Firebase library: use the saved copy (they never change).
  * - Everything else (the Firestore database itself) is not touched.
  */
-const CACHE = 'rangelog-v3';
+const CACHE = 'rangelog-v4';
 const SHELL = [
   './', 'index.html', 'css/style.css',
-  'js/version.js', 'js/config.js', 'js/store.js', 'js/target.js', 'js/stage.js', 'js/app.js',
+  'js/version.js', 'js/config.js', 'js/store.js', 'js/target.js', 'js/stage.js', 'js/ballistics.js', 'js/app.js',
   'manifest.webmanifest', 'icons/icon-192.png',
 ];
 const STATIC_HOSTS = ['www.gstatic.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];

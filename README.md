@@ -113,6 +113,14 @@ One-time setup in Firebase (the admin account and a rule that only that account 
 - **Goals:** on a member's history page, tap **🎯 Set a goal** on any drill or stage. The card then shows how far there is to go and a progress bar, and the chart shows a goal line.
 - **Season standings:** home page → **🏆 Season standings** (also in the top menu on a computer). Each range day, every drill and stage gives 10 / 8 / 6 / 5 / 4 / 3 / 2 points for 1st–7th place and 1 point for everyone else who shot it. Most Improved averages each shooter's improvement from their first to last range day on everything they shot on at least two days in the period.
 
+### Tools
+
+Home page → **🧰 Tools** (or **Tools** in the top menu on a computer).
+
+- **Zero calculator:** pick a load (or enter muzzle velocity, BC, drag model and sight height), the distance you zeroed at, and optionally a second zero to compare (e.g. 36 vs 50 yd) and your group size. It shows the near and far zero, the highest point, small targets at 25 / 50 / 100 / 200 / 300 yd with where the group lands, a bullet-path chart and a table by distance.
+- **Ballistic calculator:** the same load inputs plus bullet weight, zero, range, wind (speed and clock direction), temperature and altitude. It gives a range table with path, hold (MOA or MIL), wind drift and wind hold, velocity, energy and time of flight, plus where the bullet goes subsonic.
+- Both use the standard point-mass model with G1/G7 drag tables (spin drift, Coriolis and uphill/downhill angles aren't included). Presets are typical factory numbers; confirm holds on paper. Each phone remembers the last numbers entered.
+
 ### Dry fire timer
 
 From **Drills**, or from any drill's page (which fills in that drill's par), tap **⏲ Dry fire timer**. Press **Start**: after a random delay comes a high start beep, then a lower par beep at the par time. The screen flashes for each beep. **This is for dry fire only. Use a real shot timer for live fire.** On an iPhone, turn off silent mode to hear the beeps.
