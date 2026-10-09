@@ -491,6 +491,29 @@ tr.editing p { margin: 6px 0 0; }
 .admin-link:hover { color: var(--g700); text-decoration: underline; }
 .admin-line { font-size: .88rem; font-weight: 600; text-decoration: none; color: var(--g800); background: var(--g100); border-radius: 8px; padding: 6px 10px; align-self: flex-start; }
 
+/* ---------- video tutorials ---------- */
+.videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.video { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.video .video-thumb, .video iframe { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; display: block; }
+.video.short .video-thumb, .video.short iframe { aspect-ratio: 9 / 16; width: min(100%, 260px); margin: 0 auto; }
+.video-thumb { position: relative; background: #000 center / cover no-repeat; cursor: pointer; padding: 0; }
+.video-thumb .play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 64px; height: 46px; border-radius: 12px; background: rgba(204, 0, 0, .92); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 1.3rem; box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+}
+.video-thumb:hover .play { background: #e00; }
+.video a { align-self: flex-end; }
+.video-fields { margin: 4px 0 12px; }
+.video-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.video-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 6px; align-items: center; }
+.video-row input { margin: 0; }
+.video-row input.bad { border-color: var(--over); }
+.video-status { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: .82rem; font-weight: 600; color: var(--g700); min-height: 0; }
+.video-status:empty { display: none; }
+.video-status img { width: 64px; height: 36px; object-fit: cover; border-radius: 4px; }
+.vid-pill { color: #b00 !important; font-weight: 700; }
+
 /* ---------- shared bits used by the phone layout ---------- */
 .tabbar, .header-settings, .mobile-only { display: none; }
 .big-input { font-family: Oswald, system-ui, sans-serif; font-size: 1.6rem !important; font-weight: 600; padding: 8px 12px; letter-spacing: .02em; }

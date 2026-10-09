@@ -480,6 +480,119 @@
   }
 
   /* =========================================================
+   * YouTube video tutorials on drills and stages.
+   * Stored as { id, start?, short? } (never the raw link). The page shows a thumbnail and only
+   * loads YouTube (privacy-enhanced mode) when someone taps play.
+   * ======================================================= */
+  const YT_ID = /^[A-Za-z0-9_-]{11}$/;
+  const MAX_VIDEOS = 5;
+  function parseYouTube(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+    let u;
+    try { u = new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw); } catch (e) { return null; }
+    const host = u.hostname.toLowerCase().replace(/^(www\.|m\.|music\.)/, '');
+    let id = null, short = false;
+    if (host === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+    else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+      if (u.pathname === '/watch') id = u.searchParams.get('v');
+      else {
+        const m = u.pathname.match(/^\/(embed|shorts|live|v)\/([^/?#]+)/);
+        if (m) { id = m[2]; short = m[1] === 'shorts'; }
+      }
+    }
+    if (!id || !YT_ID.test(id)) return null;
+    const t = u.searchParams.get('t') || u.searchParams.get('start') || '';
+    let start = 0;
+    if (/^\d+$/.test(t)) start = +t;
+    else {
+      const hms = t.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+      if (hms) start = (+hms[1] || 0) * 3600 + (+hms[2] || 0) * 60 + (+hms[3] || 0);
+    }
+    const v = { id };
+    if (start) v.start = start;
+    if (short) v.short = true;
+    return v;
+  }
+  function cleanVideos(list) { return (list || []).filter(v => v && YT_ID.test(v.id)); }
+  function videoLink(v) { return `https://www.youtube.com/${v.short ? 'shorts/' + v.id : 'watch?v=' + v.id + (v.start ? '&t=' + (parseInt(v.start, 10) || 0) + 's' : '')}`; }
+  function videoThumb(v) { return `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`; }
+
+  function videosHTML(videos) {
+    const list = cleanVideos(videos);
+    if (!list.length) return '';
+    return `<div class="card videos-card"><h3>▶ Video tutorial${list.length > 1 ? 's' : ''}</h3>
+      <div class="videos">${list.map((v, i) => `<div class="video${v.short ? ' short' : ''}">
+        <button type="button" class="video-thumb" data-play-video="${esc(v.id)}" data-start="${parseInt(v.start, 10) || 0}"
+          style="background-image:url('${videoThumb(v)}')" aria-label="Play video ${i + 1}"><span class="play" aria-hidden="true">▶</span></button>
+        <a class="small" href="${esc(videoLink(v))}" target="_blank" rel="noopener">Open in YouTube ↗</a>
+      </div>`).join('')}</div>
+    </div>`;
+  }
+
+  // Editor rows: one link per row, up to MAX_VIDEOS.
+  function videoFieldsHTML(videos) {
+    const list = cleanVideos(videos);
+    const rows = (list.length ? list.map(videoLink) : ['']).map(videoRowHTML).join('');
+    return `<div class="video-fields">
+      <span class="field-label">Video tutorials <span class="muted small">YouTube links, optional</span></span>
+      <div class="video-rows">${rows}</div>
+      <button type="button" class="btn sm" data-add-video>+ Add another video</button>
+    </div>`;
+  }
+  function videoRowHTML(url) {
+    return `<div class="video-row">
+      <input type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" data-video value="${esc(url)}" placeholder="Paste a YouTube link" aria-label="YouTube link">
+      <button type="button" class="icon-btn" data-remove-video aria-label="Remove this video">×</button>
+      <span class="video-status"></span>
+    </div>`;
+  }
+  function bindVideoFields(root) {
+    const box = $('.video-fields', root);
+    if (!box) return;
+    const rowsEl = $('.video-rows', box);
+    const addBtn = $('[data-add-video]', box);
+    const check = inp => {
+      const status = inp.parentElement.querySelector('.video-status');
+      const val = inp.value.trim();
+      const v = parseYouTube(val);
+      inp.classList.toggle('bad', !!val && !v);
+      status.innerHTML = !val ? '' : v
+        ? `<img src="${videoThumb(v)}" alt="" loading="lazy"> ✓ YouTube video${v.start ? ` · starts at ${Math.floor(v.start / 60)}:${String(v.start % 60).padStart(2, '0')}` : ''}`
+        : '<span class="warn-text">Not a YouTube link</span>';
+    };
+    const sync = () => { addBtn.hidden = $$('.video-row', rowsEl).length >= MAX_VIDEOS; };
+    $$('[data-video]', rowsEl).forEach(check);
+    rowsEl.addEventListener('input', e => { if (e.target.matches('[data-video]')) check(e.target); });
+    rowsEl.addEventListener('click', e => {
+      const b = e.target.closest('[data-remove-video]');
+      if (!b) return;
+      const rows = $$('.video-row', rowsEl);
+      if (rows.length === 1) { const inp = $('[data-video]', rows[0]); inp.value = ''; check(inp); }
+      else b.parentElement.remove();
+      editorDirty = true;
+      sync();
+    });
+    addBtn.addEventListener('click', () => {
+      rowsEl.insertAdjacentHTML('beforeend', videoRowHTML(''));
+      $$('[data-video]', rowsEl).pop().focus();
+      sync();
+    });
+    sync();
+  }
+  // Returns { videos, bad } where bad counts links that aren't YouTube.
+  function collectVideos(root) {
+    const out = { videos: [], bad: 0 };
+    $$('[data-video]', root).forEach(inp => {
+      if (!inp.value.trim()) return;
+      const v = parseYouTube(inp.value);
+      if (v) { if (!out.videos.some(x => x.id === v.id && x.start === v.start)) out.videos.push(v); }
+      else out.bad++;
+    });
+    return out;
+  }
+
+  /* =========================================================
    * Drills
    * ======================================================= */
   /*
@@ -540,7 +653,7 @@
             <div class="thumb target-thumb${targetCount(d) > 1 ? ' multi' : ''}">${targetsHTML(d, { mini: true })}</div>
             <div class="item-body">
               <h3>${esc(d.name)}</h3>
-              <div class="meta"><span class="pill">Par ${fmtTime(d.par)}s</span>${distanceText(d) ? `<span>${distanceText(d)}</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span>${targetCount(d) > 1 ? `<span>${targetCount(d)} targets</span>` : ''}</div>
+              <div class="meta"><span class="pill">Par ${fmtTime(d.par)}s</span>${distanceText(d) ? `<span>${distanceText(d)}</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span>${targetCount(d) > 1 ? `<span>${targetCount(d)} targets</span>` : ''}${cleanVideos(d.videos).length ? '<span class="vid-pill">▶ Video</span>' : ''}</div>
               <div class="best">${best ? `🏆 ${fmtTime(best.best.time)}s — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
             </div>
           </a>`;
@@ -563,7 +676,8 @@
             <div class="stat-card"><span class="value">${rounds || '—'}</span><span class="label">Rounds</span></div>
             <div class="stat-card"><span class="value">${distanceText(d) ? distanceText(d).replace(' yd', '<small>yd</small>') : '—'}</span><span class="label">Distance</span></div>
           </div>
-          <div class="card"><h3>Instructions</h3><div class="instructions">${d.instructions ? nl2br(d.instructions) : '<em class="muted">No instructions.</em>'}</div></div>`;
+          <div class="card"><h3>Instructions</h3><div class="instructions">${d.instructions ? nl2br(d.instructions) : '<em class="muted">No instructions.</em>'}</div></div>
+          ${videosHTML(d.videos)}`;
     app.innerHTML = `
       <a class="back" href="#/drills">← All drills</a>
       <div class="page-head">
@@ -625,6 +739,7 @@
               <label>Rounds <input name="rounds" type="number" step="1" min="0" inputmode="numeric" value="${esc(d.rounds == null ? '' : d.rounds)}"></label>
             </div>
             <label>Instructions <textarea name="instructions" rows="9" placeholder="Start position, string of fire, transitions, reloads, scoring…">${esc(d.instructions)}</textarea></label>
+            ${videoFieldsHTML(d.videos)}
           </div>
           <div class="form-actions">
             <button type="submit" class="btn primary">${existing ? 'Save changes' : 'Create drill'}</button>
@@ -644,6 +759,7 @@
       </form>`;
 
     const form = $('#drill-form');
+    bindVideoFields(form);
     const f = form.elements;
     const area = $('#target-area');
 
@@ -709,7 +825,10 @@
       const name = f.name.value.trim();
       const par = num(f.par.value);
       if (!name || !par || par <= 0) return;
+      const vids = collectVideos(form);
+      if (vids.bad) { toast(`${vids.bad} video link${vids.bad === 1 ? " isn't" : "s aren't"} a YouTube link. Fix or remove ${vids.bad === 1 ? 'it' : 'them'}.`); return; }
       const data = {
+        videos: vids.videos,
         name,
         par: round2(par),
         distance: num(f.distance.value),
@@ -747,7 +866,7 @@
             <div class="thumb">${Stage.svg(objs)}</div>
             <div class="item-body">
               <h3>${esc(s.name)}</h3>
-              <div class="meta"><span class="pill">${Stage.rounds(objs)} rds min</span><span>${targets} target${targets === 1 ? '' : 's'}</span></div>
+              <div class="meta"><span class="pill">${Stage.rounds(objs)} rds min</span><span>${targets} target${targets === 1 ? '' : 's'}</span>${cleanVideos(s.videos).length ? '<span class="vid-pill">▶ Video</span>' : ''}</div>
               <div class="best">${best ? `🏆 ${fmtScore(scoreOf(best.best, modeOf('stage', s)), modeOf('stage', s))}${unitOf(modeOf('stage', s))} — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
             </div>
           </a>`;
@@ -795,6 +914,7 @@
           <div class="scoring-note">${s.scoring === 'hf' ? '🎯 Scored by <b>hit factor</b> (USPSA): points ÷ time, highest wins.' : '⏱ Scored by <b>time plus</b>: raw time + penalties, fastest wins.'}
           </div>
           <div class="card"><h3>Stage procedure</h3><div class="instructions">${s.description ? nl2br(s.description) : '<em class="muted">No procedure written.</em>'}</div></div>
+          ${videosHTML(s.videos)}
           ${shootable.length ? `<div class="card"><h3>Targets</h3>
             <table class="table target-table" id="target-table"><thead><tr><th>Target</th><th class="num">Shots</th><th>Where to shoot</th></tr></thead><tbody>
             ${shootable.map(o => `<tr data-id="${esc(o.id)}"><td><span class="tag tag-${o.type}">${esc(o.label || Stage.TYPES[o.type].name)}</span></td><td class="num strong">${o.shots || 0}</td><td>${esc(o.note) || '<span class="muted">—</span>'}</td></tr>`).join('')}
@@ -874,6 +994,7 @@
           <option value="hf"${s.scoring === 'hf' ? ' selected' : ''}>Hit factor, USPSA (points ÷ time, highest wins)</option>
         </select></label>
         <p class="hint">Changing scoring later only changes how runs are ranked: runs scored the other way stay in the history but aren't compared.</p>
+        ${videoFieldsHTML(s.videos)}
       </form>
       <div class="palette card">
         <span class="palette-title">Add:</span>
@@ -894,6 +1015,7 @@
       </div>`;
 
     const form = $('#stage-form');
+    bindVideoFields(form);
     const svg = $('#bay');
     const find = oid => s.objects.find(o => o.id === oid);
 
@@ -1096,7 +1218,9 @@
       e.preventDefault();
       const name = form.elements.name.value.trim();
       if (!name) return;
-      const data = { name, description: form.elements.description.value.trim(), objects: s.objects, scoring: form.elements.scoring.value === 'hf' ? 'hf' : 'time' };
+      const vids = collectVideos(form);
+      if (vids.bad) { toast(`${vids.bad} video link${vids.bad === 1 ? " isn't" : "s aren't"} a YouTube link. Fix or remove ${vids.bad === 1 ? 'it' : 'them'}.`); return; }
+      const data = { name, description: form.elements.description.value.trim(), objects: s.objects, scoring: form.elements.scoring.value === 'hf' ? 'hf' : 'time', videos: vids.videos };
       let newId = id;
       if (existing) Store.update('stages', id, data);
       else newId = Store.add('stages', data);
@@ -2509,6 +2633,20 @@
       Store.remove('times', t.id);
       toast('Run deleted');
     }
+  });
+
+  // Tap a video thumbnail: swap in the YouTube player (privacy-enhanced domain) and start it.
+  app.addEventListener('click', e => {
+    const b = e.target.closest('[data-play-video]');
+    if (!b || !YT_ID.test(b.dataset.playVideo)) return;
+    const start = parseInt(b.dataset.start, 10) || 0;
+    const frame = document.createElement('iframe');
+    frame.src = `https://www.youtube-nocookie.com/embed/${b.dataset.playVideo}?autoplay=1&rel=0&playsinline=1${start ? '&start=' + start : ''}`;
+    frame.title = 'YouTube video tutorial';
+    frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+    frame.allowFullscreen = true;
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
+    b.replaceWith(frame);
   });
 
   // Gun type filter chips (Day view, drill/stage leaderboards, history, standings).
