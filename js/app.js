@@ -481,8 +481,9 @@
 
   /* =========================================================
    * YouTube video tutorials on drills and stages.
-   * Stored as { id, start?, short? } (never the raw link). The page shows a thumbnail and only
-   * loads YouTube (privacy-enhanced mode) when someone taps play.
+   * Stored as { id, start?, end?, short? } (never the raw link); start/end clip the video to the
+   * part worth watching. The page shows a thumbnail and only loads YouTube (privacy-enhanced
+   * mode) when someone taps play.
    * ======================================================= */
   const YT_ID = /^[A-Za-z0-9_-]{11}$/;
   const MAX_VIDEOS = 5;
@@ -517,14 +518,33 @@
   function cleanVideos(list) { return (list || []).filter(v => v && YT_ID.test(v.id)); }
   function videoLink(v) { return `https://www.youtube.com/${v.short ? 'shorts/' + v.id : 'watch?v=' + v.id + (v.start ? '&t=' + (parseInt(v.start, 10) || 0) + 's' : '')}`; }
   function videoThumb(v) { return `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`; }
+  // "1:30", "90", "1:02:15" → seconds; '' → null; anything else → NaN.
+  function parseClock(text) {
+    const t = String(text || '').trim();
+    if (!t) return null;
+    if (/^\d+$/.test(t)) return +t;
+    const m = t.match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/);
+    return m ? (+m[1] || 0) * 3600 + +m[2] * 60 + +m[3] : NaN;
+  }
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.round(sec));
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s2 = String(sec % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${s2}` : `${m}:${s2}`;
+  }
+  function clipText(v) {
+    const st = parseInt(v.start, 10) || 0, en = parseInt(v.end, 10) || 0;
+    if (en) return `${fmtClock(st)}–${fmtClock(en)} · ${fmtClock(en - st)}`;
+    return st ? `from ${fmtClock(st)}` : '';
+  }
 
   function videosHTML(videos) {
     const list = cleanVideos(videos);
     if (!list.length) return '';
     return `<div class="card videos-card"><h3>▶ Video tutorial${list.length > 1 ? 's' : ''}</h3>
       <div class="videos">${list.map((v, i) => `<div class="video${v.short ? ' short' : ''}">
-        <button type="button" class="video-thumb" data-play-video="${esc(v.id)}" data-start="${parseInt(v.start, 10) || 0}"
-          style="background-image:url('${videoThumb(v)}')" aria-label="Play video ${i + 1}"><span class="play" aria-hidden="true">▶</span></button>
+        <button type="button" class="video-thumb" data-play-video="${esc(v.id)}" data-start="${parseInt(v.start, 10) || 0}" data-end="${parseInt(v.end, 10) || 0}"
+          style="background-image:url('${videoThumb(v)}')" aria-label="Play video ${i + 1}${clipText(v) ? ', clip ' + clipText(v) : ''}">
+          <span class="play" aria-hidden="true">▶</span>${clipText(v) ? `<span class="clip-badge">✂ ${clipText(v)}</span>` : ''}</button>
         <a class="small" href="${esc(videoLink(v))}" target="_blank" rel="noopener">Open in YouTube ↗</a>
       </div>`).join('')}</div>
     </div>`;
@@ -533,17 +553,23 @@
   // Editor rows: one link per row, up to MAX_VIDEOS.
   function videoFieldsHTML(videos) {
     const list = cleanVideos(videos);
-    const rows = (list.length ? list.map(videoLink) : ['']).map(videoRowHTML).join('');
+    const rows = (list.length ? list : [null]).map(videoRowHTML).join('');
     return `<div class="video-fields">
       <span class="field-label">Video tutorials <span class="muted small">YouTube links, optional</span></span>
       <div class="video-rows">${rows}</div>
       <button type="button" class="btn sm" data-add-video>+ Add another video</button>
     </div>`;
   }
-  function videoRowHTML(url) {
+  function videoRowHTML(v) {
+    const url = v ? `https://www.youtube.com/${v.short ? 'shorts/' + v.id : 'watch?v=' + v.id}` : '';
+    const st = v && v.start ? fmtClock(v.start) : '', en = v && v.end ? fmtClock(v.end) : '';
     return `<div class="video-row">
       <input type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" data-video value="${esc(url)}" placeholder="Paste a YouTube link" aria-label="YouTube link">
       <button type="button" class="icon-btn" data-remove-video aria-label="Remove this video">×</button>
+      <div class="clip-fields">
+        <label>Start <input data-clip-start inputmode="numeric" autocomplete="off" placeholder="0:00" value="${esc(st)}" aria-label="Clip start time"></label>
+        <label>End <input data-clip-end inputmode="numeric" autocomplete="off" placeholder="end" value="${esc(en)}" aria-label="Clip end time"></label>
+      </div>
       <span class="video-status"></span>
     </div>`;
   }
@@ -552,23 +578,31 @@
     if (!box) return;
     const rowsEl = $('.video-rows', box);
     const addBtn = $('[data-add-video]', box);
-    const check = inp => {
-      const status = inp.parentElement.querySelector('.video-status');
+    const check = row => {
+      const inp = $('[data-video]', row), status = $('.video-status', row);
+      const sIn = $('[data-clip-start]', row), eIn = $('[data-clip-end]', row);
       const val = inp.value.trim();
       const v = parseYouTube(val);
       inp.classList.toggle('bad', !!val && !v);
-      status.innerHTML = !val ? '' : v
-        ? `<img src="${videoThumb(v)}" alt="" loading="lazy"> ✓ YouTube video${v.start ? ` · starts at ${Math.floor(v.start / 60)}:${String(v.start % 60).padStart(2, '0')}` : ''}`
-        : '<span class="warn-text">Not a YouTube link</span>';
+      // A time in the link (…&t=90) fills Start if it's empty.
+      if (v && v.start && !sIn.value.trim()) sIn.value = fmtClock(v.start);
+      const c = readClip(row);
+      sIn.classList.toggle('bad', c.error === 'start');
+      eIn.classList.toggle('bad', c.error === 'end' || c.error === 'order');
+      if (!val) { status.innerHTML = ''; return; }
+      if (!v) { status.innerHTML = '<span class="warn-text">Not a YouTube link</span>'; return; }
+      const clip = c.error ? '' : clipText({ start: c.start, end: c.end });
+      status.innerHTML = `<img src="${videoThumb(v)}" alt="" loading="lazy"> ✓ YouTube video${clip ? ` · ✂ ${clip}` : ''}`
+        + (c.error ? ` <span class="warn-text">${c.error === 'order' ? 'End must be after Start' : 'Use a time like 1:30 or 90'}</span>` : '');
     };
     const sync = () => { addBtn.hidden = $$('.video-row', rowsEl).length >= MAX_VIDEOS; };
-    $$('[data-video]', rowsEl).forEach(check);
-    rowsEl.addEventListener('input', e => { if (e.target.matches('[data-video]')) check(e.target); });
+    $$('.video-row', rowsEl).forEach(check);
+    rowsEl.addEventListener('input', e => { const row = e.target.closest('.video-row'); if (row) check(row); });
     rowsEl.addEventListener('click', e => {
       const b = e.target.closest('[data-remove-video]');
       if (!b) return;
       const rows = $$('.video-row', rowsEl);
-      if (rows.length === 1) { const inp = $('[data-video]', rows[0]); inp.value = ''; check(inp); }
+      if (rows.length === 1) { $$('input', rows[0]).forEach(i => { i.value = ''; }); check(rows[0]); }
       else b.parentElement.remove();
       editorDirty = true;
       sync();
@@ -580,14 +614,27 @@
     });
     sync();
   }
-  // Returns { videos, bad } where bad counts links that aren't YouTube.
+  // A row's clip: { start, end, error } where error is 'start' | 'end' | 'order' | null.
+  function readClip(row) {
+    const st = parseClock($('[data-clip-start]', row).value), en = parseClock($('[data-clip-end]', row).value);
+    if (Number.isNaN(st)) return { error: 'start' };
+    if (Number.isNaN(en)) return { error: 'end' };
+    if (en !== null && en <= (st || 0)) return { error: 'order' };
+    return { start: st || 0, end: en, error: null };
+  }
+  // Returns { videos, bad } where bad counts rows with a non-YouTube link or an invalid clip.
   function collectVideos(root) {
     const out = { videos: [], bad: 0 };
-    $$('[data-video]', root).forEach(inp => {
-      if (!inp.value.trim()) return;
-      const v = parseYouTube(inp.value);
-      if (v) { if (!out.videos.some(x => x.id === v.id && x.start === v.start)) out.videos.push(v); }
-      else out.bad++;
+    $$('.video-row', root).forEach(row => {
+      const url = $('[data-video]', row).value.trim();
+      if (!url) return;
+      const v = parseYouTube(url);
+      const c = readClip(row);
+      if (!v || c.error) { out.bad++; return; }
+      delete v.start;
+      if (c.start) v.start = c.start;
+      if (c.end) v.end = c.end;
+      if (!out.videos.some(x => x.id === v.id && x.start === v.start && x.end === v.end)) out.videos.push(v);
     });
     return out;
   }
@@ -826,7 +873,7 @@
       const par = num(f.par.value);
       if (!name || !par || par <= 0) return;
       const vids = collectVideos(form);
-      if (vids.bad) { toast(`${vids.bad} video link${vids.bad === 1 ? " isn't" : "s aren't"} a YouTube link. Fix or remove ${vids.bad === 1 ? 'it' : 'them'}.`); return; }
+      if (vids.bad) { toast(`${vids.bad} video${vids.bad === 1 ? ' needs' : 's need'} fixing: a non-YouTube link or a bad clip time.`); return; }
       const data = {
         videos: vids.videos,
         name,
@@ -1219,7 +1266,7 @@
       const name = form.elements.name.value.trim();
       if (!name) return;
       const vids = collectVideos(form);
-      if (vids.bad) { toast(`${vids.bad} video link${vids.bad === 1 ? " isn't" : "s aren't"} a YouTube link. Fix or remove ${vids.bad === 1 ? 'it' : 'them'}.`); return; }
+      if (vids.bad) { toast(`${vids.bad} video${vids.bad === 1 ? ' needs' : 's need'} fixing: a non-YouTube link or a bad clip time.`); return; }
       const data = { name, description: form.elements.description.value.trim(), objects: s.objects, scoring: form.elements.scoring.value === 'hf' ? 'hf' : 'time', videos: vids.videos };
       let newId = id;
       if (existing) Store.update('stages', id, data);
@@ -2640,8 +2687,9 @@
     const b = e.target.closest('[data-play-video]');
     if (!b || !YT_ID.test(b.dataset.playVideo)) return;
     const start = parseInt(b.dataset.start, 10) || 0;
+    const end = parseInt(b.dataset.end, 10) || 0;
     const frame = document.createElement('iframe');
-    frame.src = `https://www.youtube-nocookie.com/embed/${b.dataset.playVideo}?autoplay=1&rel=0&playsinline=1${start ? '&start=' + start : ''}`;
+    frame.src = `https://www.youtube-nocookie.com/embed/${b.dataset.playVideo}?autoplay=1&rel=0&playsinline=1${start ? '&start=' + start : ''}${end > start ? '&end=' + end : ''}`;
     frame.title = 'YouTube video tutorial';
     frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     frame.allowFullscreen = true;
