@@ -72,6 +72,90 @@
     console.error(err);
     window.dispatchEvent(new CustomEvent('store-error', { detail: err.message || String(err) }));
   }
+  /*
+   * Outbox (cloud mode). Every change is also kept in this browser's localStorage until Firestore
+   * confirms the server has it. Firestore has its own offline queue, but a phone can lose it (the
+   * app is closed or killed with no signal, or the offline cache couldn't start), so anything still
+   * listed here is sent again the next time the site opens. Sending a change twice is harmless:
+   * runs are added with arrayUnion (an identical run isn't added again) and everything else is a
+   * whole-document set or delete.
+   */
+  const OUTBOX_KEY = 'rangelog-outbox-v1';
+  // Last data seen from Firestore, so the site still has drills, members and history to show
+  // when it opens with no signal and Firestore's own offline cache is missing.
+  const COPY_KEY = 'rangelog-cloud-copy-v1';
+  const FINAL_ERRORS = ['permission-denied', 'invalid-argument', 'failed-precondition', 'out-of-range'];
+  let outbox = [];
+  const inFlight = new Set();
+  let copyTimer = null;
+
+  function loadJSON(key) {
+    try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+  }
+  function saveOutbox() {
+    try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch (e) { console.warn(e); }
+    window.dispatchEvent(new CustomEvent('store-outbox'));
+  }
+  function queue(op) {
+    op.key = uid();
+    outbox.push(op);
+    saveOutbox();
+    send(op);
+  }
+  function runOp(op) {
+    const FV = firebase.firestore.FieldValue;
+    const days = db.collection('days');
+    if (op.type === 'addRun') return days.doc(op.date).set({ date: op.date, runs: FV.arrayUnion(op.run) }, { merge: true });
+    if (op.type === 'removeRun') return days.doc(op.date).update({ runs: FV.arrayRemove(op.run) });
+    if (op.type === 'set') return db.collection(op.c).doc(op.id).set(op.data, op.merge ? { merge: true } : {});
+    if (op.type === 'delete') return db.collection(op.c).doc(op.id).delete();
+    return Promise.resolve(); // unknown (from a newer version): drop it
+  }
+  // The promise Firestore returns settles only once the server has the change (or refuses it).
+  function send(op) {
+    if (!db || inFlight.has(op.key)) return;
+    inFlight.add(op.key);
+    const drop = () => { outbox = outbox.filter(o => o.key !== op.key); saveOutbox(); };
+    let write;
+    try { write = runOp(op); } catch (e) { write = Promise.reject(e); }
+    write.then(() => { inFlight.delete(op.key); drop(); }, err => {
+      inFlight.delete(op.key);
+      if (op.type === 'removeRun' && err.code === 'not-found') drop(); // that day has no runs: nothing to remove
+      else if (FINAL_ERRORS.includes(err.code)) { drop(); writeFailed(err); }
+      else console.warn('Not sent yet; will try again next time the site opens.', err);
+    });
+  }
+  // Runs still in the outbox show even if Firestore's own copy of them was lost.
+  function overlayOutbox() {
+    const removed = new Set(outbox.filter(o => o.type === 'removeRun').map(o => o.run.id));
+    outbox.forEach(o => {
+      if (o.type !== 'addRun' || removed.has(o.run.id) || rawRuns.has(o.run.id)) return;
+      rawRuns.set(o.run.id, { date: o.date, raw: o.run });
+      cache.times.push(Object.assign({}, o.run, { date: o.date }));
+    });
+    if (removed.size) cache.times = cache.times.filter(r => !removed.has(r.id));
+  }
+  function loadCopy() {
+    const copy = loadJSON(COPY_KEY);
+    if (!copy) return false;
+    ['drills', 'stages', 'members', 'times'].forEach(c => { cache[c] = Array.isArray(copy[c]) ? copy[c] : []; });
+    cache.settings = copy.settings || {};
+    rawRuns = new Map();
+    cache.times.forEach(r => {
+      const raw = Object.assign({}, r);
+      delete raw.date;
+      rawRuns.set(r.id, { date: r.date, raw });
+    });
+    return true;
+  }
+  function saveCopySoon() {
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      const copy = { drills: cache.drills, stages: cache.stages, members: cache.members, settings: cache.settings, times: cache.times };
+      try { localStorage.setItem(COPY_KEY, JSON.stringify(copy)); } catch (e) { console.warn(e); }
+    }, 1000);
+  }
+
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -107,6 +191,10 @@
 
   /* ---------- cloud mode ---------- */
   async function initCloud() {
+    outbox = (loadJSON(OUTBOX_KEY) || []).filter(o => o && o.key && o.type);
+    const hadCopy = loadCopy();
+    overlayOutbox();
+
     const base = `https://www.gstatic.com/firebasejs/${FB_VERSION}/`;
     await loadScript(base + 'firebase-app-compat.js');
     await loadScript(base + 'firebase-firestore-compat.js');
@@ -133,19 +221,29 @@
           });
         });
         cache.times = list;
+        overlayOutbox();
       }],
     ];
-    await Promise.all(subs.map(([coll, apply]) => new Promise(resolve => {
+    let started = false;
+    const firstSnaps = Promise.all(subs.map(([coll, apply]) => new Promise(resolve => {
       let first = true;
+      const done = () => {
+        if (first) { first = false; resolve(); if (started) emit(); } else emit();
+      };
       db.collection(coll).onSnapshot(snap => {
-        apply(snap);
-        if (first) { first = false; resolve(); } else emit();
+        // Offline with no Firestore cache: keep the saved copy rather than showing nothing.
+        if (!(hadCopy && snap.empty && snap.metadata.fromCache)) { apply(snap); saveCopySoon(); }
+        done();
       }, err => {
         console.error(err);
         Store.error = err.message;
-        if (first) { first = false; resolve(); } else emit();
+        done();
       });
     })));
+    // With a saved copy there's something to show already; don't wait long on a weak signal.
+    await (hadCopy ? Promise.race([firstSnaps, new Promise(r => setTimeout(r, 4000))]) : firstSnaps);
+    started = true;
+    outbox.forEach(send);
     // Sign-in is only needed for the admin page, so load it after the site is up.
     authLoaded = loadScript(`https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-auth-compat.js`)
       .then(watchAuth)
@@ -199,14 +297,13 @@
     // Saves only the given keys; everything else in settings is kept.
     saveSettings(partial) {
       const data = plain(Object.assign({}, this.settings(), partial, { updatedAt: Date.now() }));
-      if (mode === 'local') {
-        cache.settings = data;
-        writeLocal();
-        emit();
-      } else {
-        db.collection('settings').doc('config').set(data).catch(writeFailed);
-      }
+      cache.settings = data;
+      if (mode === 'local') writeLocal();
+      else queue({ type: 'set', c: 'settings', id: 'config', data });
+      emit();
     },
+    // Changes made here that the server hasn't confirmed yet (cloud mode).
+    pendingCount() { return outbox.length; },
     get(c, id) { return cache[c].find(x => x.id === id) || null; },
     onChange(fn) { listeners.push(fn); },
 
@@ -225,12 +322,11 @@
         const run = Object.assign({}, data);
         delete run.date;
         rawRuns.set(id, { date: data.date, raw: run });
-        const FV = firebase.firestore.FieldValue;
-        db.collection('days').doc(data.date).set({ date: data.date, runs: FV.arrayUnion(run) }, { merge: true }).catch(writeFailed);
+        queue({ type: 'addRun', date: data.date, run });
       } else {
         const doc = Object.assign({}, data);
         delete doc.id;
-        db.collection(c).doc(id).set(doc).catch(writeFailed);
+        queue({ type: 'set', c, id, data: doc });
       }
       emit();
       return id;
@@ -243,7 +339,7 @@
       if (i >= 0) cache[c][i] = Object.assign({}, cache[c][i], data, { id });
 
       if (mode === 'local') writeLocal();
-      else db.collection(c).doc(id).set(data, { merge: true }).catch(writeFailed);
+      else queue({ type: 'set', c, id, data, merge: true });
       emit();
     },
 
@@ -254,12 +350,9 @@
       if (mode === 'local') {
         writeLocal();
       } else if (c === 'times') {
-        if (ref) {
-          const FV = firebase.firestore.FieldValue;
-          db.collection('days').doc(ref.date).update({ runs: FV.arrayRemove(ref.raw) }).catch(writeFailed);
-        }
+        if (ref) queue({ type: 'removeRun', date: ref.date, run: ref.raw });
       } else {
-        db.collection(c).doc(id).delete().catch(writeFailed);
+        queue({ type: 'delete', c, id });
       }
       emit();
     },

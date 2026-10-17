@@ -3022,14 +3022,17 @@
         if (confirm('Replace everything in this browser with the demo data?')) { Store.resetDemo(); toast('Demo data restored'); }
       });
     } else {
+      const n = Store.pendingCount();
+      const pending = n ? `⏳ ${n} change${n === 1 ? '' : 's'} saved on this phone, waiting for signal to sync with the group.` : '';
       footer.innerHTML = Store.error
-        ? `<div class="mode-banner error">⚠️ Could not reach the database: ${esc(Store.error)}</div>`
-        : '<p class="muted small center">☁️ Synced with the group</p>';
+        ? `<div class="mode-banner error">⚠️ Could not reach the database: ${esc(Store.error)}${pending ? '<br>' + pending : ''}</div>`
+        : `<p class="muted small center">${pending || '☁️ Synced with the group'}</p>`;
     }
   }
 
   window.addEventListener('beforeunload', e => { if (editorDirty) { e.preventDefault(); e.returnValue = ''; } });
   window.addEventListener('store-error', e => toast('Could not save: ' + e.detail));
+  window.addEventListener('store-outbox', () => { if ($('#footer')) renderFooter(); });
 
   app.addEventListener('click', e => {
     const btn = e.target.closest('[data-del-time]');
