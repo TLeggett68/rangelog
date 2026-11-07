@@ -69,7 +69,12 @@
     { key: 'ns', label: 'No-shoots', pts: [-10, -10] },
     { key: 'p', label: 'Procedurals', pts: [-10, -10] },
   ];
-  function modeOf(kind, item) { return kind === 'stage' && item && item.scoring === 'hf' ? 'hf' : 'time'; }
+  function modeOf(kind, item) { return item && item.scoring === 'hf' ? 'hf' : 'time'; }
+  // Par only applies to time-plus drills (hit-factor drills rank by HF, so "vs par" is hidden).
+  function parOf(kind, item, fallback) {
+    if (kind !== 'drill' || modeOf(kind, item) === 'hf') return null;
+    return num(item ? item.par : fallback);
+  }
   function isHF(r) { return r.scoring === 'hf' && typeof r.hf === 'number'; }
   function scoreOf(r, mode) { return mode === 'hf' ? r.hf : r.time; }
   function fmtHF(v) { return Number(v).toFixed(4); }
@@ -220,7 +225,7 @@
     let scoring;
     if (mode === 'hf') {
       const pf = getPref(PF_KEY, 'minor');
-      const maxPts = item && item.objects ? Stage.rounds(item.objects) * 5 : 0;
+      const maxPts = !item ? 0 : item.objects ? Stage.rounds(item.objects) * 5 : (parseInt(item.rounds, 10) || (item.marks || []).length) * 5;
       scoring = `<fieldset class="pen-grid hf-grid"><legend>Hits <span class="muted small">— count steel hits as A</span></legend>
         ${HF_HITS.map(h => stepperHTML('hit-' + h.key, h.label, h.key === 'a' ? '5 pts' : h.pts[0] < 0 ? '−10 pts' : `${h.pts[0]} pts minor / ${h.pts[1]} major`)).join('')}
         <div class="pen pf-row"><span class="pen-label">Power factor${maxPts ? `<small>${maxPts} pts possible</small>` : ''}</span>
@@ -410,7 +415,7 @@
         return {
           kind: r0.kind, id: r0.itemId, exists: !!item, mode,
           name: item ? item.name : r0.itemName,
-          par: r0.kind === 'drill' ? num(item ? item.par : r0.par) : null,
+          par: parOf(r0.kind, item, r0.par),
           ranked: rankRuns(list, mode), count: list.length,
         };
       }).filter(g => g.ranked.length).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'drill' ? -1 : 1) || a.name.localeCompare(b.name));
@@ -712,13 +717,14 @@
       app.innerHTML = `
         <div class="page-head"><div><p class="eyebrow">Drills</p><h1>Drills &amp; par times</h1></div><div class="actions"><a class="btn" href="#/timer">⏲ Dry fire timer</a><a class="btn primary" href="#/drills/new">+ New drill</a></div></div>
         ${drills.length ? `<div class="grid items">${drills.map(d => {
-          const best = rankRuns(runsFor('drill', d.id))[0];
+          const dMode = modeOf('drill', d);
+          const best = rankRuns(runsFor('drill', d.id), dMode)[0];
           return `<a class="card item-card" href="#/drills/${esc(d.id)}">
             <div class="thumb target-thumb${targetCount(d) > 1 ? ' multi' : ''}">${targetsHTML(d, { mini: true })}</div>
             <div class="item-body">
               <h3>${esc(d.name)}</h3>
-              <div class="meta"><span class="pill">Par ${fmtTime(d.par)}s</span>${distanceText(d) ? `<span>${distanceText(d)}</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span>${targetCount(d) > 1 ? `<span>${targetCount(d)} targets</span>` : ''}${cleanVideos(d.videos).length ? '<span class="vid-pill">▶ Video</span>' : ''}</div>
-              <div class="best">${best ? `🏆 ${fmtTime(best.best.time)}s — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
+              <div class="meta">${dMode === 'hf' ? '<span class="pill">Hit factor</span>' : ''}<span class="pill">Par ${fmtTime(d.par)}s</span>${distanceText(d) ? `<span>${distanceText(d)}</span>` : ''}<span>${esc(d.rounds || (d.marks || []).length)} rds</span>${targetCount(d) > 1 ? `<span>${targetCount(d)} targets</span>` : ''}${cleanVideos(d.videos).length ? '<span class="vid-pill">▶ Video</span>' : ''}</div>
+              <div class="best">${best ? `🏆 ${fmtScore(scoreOf(best.best, dMode), dMode)}${unitOf(dMode)} — ${esc(best.shooter)}` : '<span class="muted">No times yet</span>'}</div>
             </div>
           </a>`;
         }).join('')}</div>`
@@ -740,6 +746,7 @@
             <div class="stat-card"><span class="value">${rounds || '—'}</span><span class="label">Rounds</span></div>
             <div class="stat-card"><span class="value">${distanceText(d) ? distanceText(d).replace(' yd', '<small>yd</small>') : '—'}</span><span class="label">Distance</span></div>
           </div>
+          ${modeOf('drill', d) === 'hf' ? '<div class="scoring-note">🎯 Scored by <b>hit factor</b> (USPSA): points ÷ time, highest wins. Par is the pace to aim for.</div>' : ''}
           <div class="card"><h3>Instructions</h3><div class="instructions">${d.instructions ? nl2br(d.instructions) : '<em class="muted">No instructions.</em>'}</div></div>
           ${videosHTML(d.videos)}`;
     app.innerHTML = `
@@ -773,7 +780,7 @@
     const refresh = () => {
       const cur = Store.get('drills', id);
       if (!cur) { location.hash = '#/drills'; return; }
-      $('#times-section').innerHTML = historyHTML('drill', id, num(cur.par));
+      $('#times-section').innerHTML = historyHTML('drill', id, parOf('drill', cur));
     };
     refresh();
     pageRefresh = refresh;
@@ -802,6 +809,11 @@
               <label>Distance (yd) <input name="distance" type="number" step="1" min="0" inputmode="numeric" value="${esc(d.distance == null ? '' : d.distance)}" placeholder="7"></label>
               <label>Rounds <input name="rounds" type="number" step="1" min="0" inputmode="numeric" value="${esc(d.rounds == null ? '' : d.rounds)}"></label>
             </div>
+            <label>Scoring <select name="scoring">
+              <option value="time"${d.scoring === 'hf' ? '' : ' selected'}>Time plus (fastest final time wins)</option>
+              <option value="hf"${d.scoring === 'hf' ? ' selected' : ''}>Hit factor, USPSA (points ÷ time, highest wins)</option>
+            </select></label>
+            <p class="hint">Changing scoring later only changes how runs are ranked: runs scored the other way stay in the history but aren't compared.</p>
             <label>Instructions <textarea name="instructions" rows="9" placeholder="Start position, string of fire, transitions, reloads, scoring…">${esc(d.instructions)}</textarea></label>
             ${videoFieldsHTML(d.videos)}
           </div>
@@ -898,6 +910,7 @@
         distance: num(f.distance.value),
         rounds: parseInt(f.rounds.value, 10) || d.marks.length,
         instructions: f.instructions.value.trim(),
+        scoring: f.scoring.value === 'hf' ? 'hf' : 'time',
         marks: d.marks,
         targetCount: d.targetCount,
         targetDistances: d.targetCount > 1
@@ -1409,7 +1422,7 @@
     function mountForm() {
       const { kind, id, item } = itemOfValue(current);
       $('#item-info').innerHTML = kind === 'drill'
-        ? `<span class="pill">Par ${fmtTime(item.par)}s</span>${item.rounds ? `<span>${esc(item.rounds)} rds</span>` : ''}${distanceText(item) ? `<span>${distanceText(item)}</span>` : ''}<a href="#/drills/${esc(id)}">View drill →</a>`
+        ? `<span class="pill">Par ${fmtTime(item.par)}s</span>${item.scoring === 'hf' ? '<span class="pill">Hit factor</span>' : ''}${item.rounds ? `<span>${esc(item.rounds)} rds</span>` : ''}${distanceText(item) ? `<span>${distanceText(item)}</span>` : ''}<a href="#/drills/${esc(id)}">View drill →</a>`
         : `<span class="pill">${Stage.rounds(item.objects)} rds min</span>${item.scoring === 'hf' ? '<span class="pill">Hit factor</span>' : ''}<a href="#/stages/${esc(id)}">View stage →</a>`;
       $('#record-slot').innerHTML = recordFormHTML(kind, item);
       bindRecordForm(kind, () => itemFor(kind, id), afterSave);
@@ -1430,7 +1443,7 @@
       const runs = runsFor(kind, id).filter(r => r.date === today());
       const mode = modeOf(kind, item);
       const ranked = rankRuns(runs, mode);
-      const par = kind === 'drill' ? num(item.par) : null;
+      const par = parOf(kind, item);
       const latest = runs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 5);
       $('#today-slot').innerHTML = `<div class="card">
         <h3>Today · ${esc(item.name)} <span class="count">${runs.length}</span></h3>
@@ -1657,7 +1670,7 @@
         const hf = mode === 'hf';
         const scored = list2.filter(r => isHF(r) === hf);
         if (!scored.length) return null;
-        const par = r0.kind === 'drill' ? num(item ? item.par : r0.par) : null;
+        const par = parOf(r0.kind, item, r0.par);
         const byDay = new Map();
         scored.forEach(r => {
           const v = scoreOf(r, mode);
@@ -1686,7 +1699,7 @@
 
       // ---- overall ----
       const days = new Set(runs.map(r => r.date));
-      const drillRuns = runs.filter(r => r.kind === 'drill');
+      const drillRuns = runs.filter(r => r.kind === 'drill' && !isHF(r));
       const parFor = r => { const it = itemFor('drill', r.itemId); return num(it ? it.par : r.par); };
       const parRuns = drillRuns.filter(r => parFor(r));
       const underParPct = parRuns.length ? Math.round(parRuns.filter(r => r.time <= parFor(r)).length / parRuns.length * 100) : null;
@@ -1720,7 +1733,7 @@
           ${items.map((it, i) => `<div class="card progress-card">
             <div class="result-head">
               <h3>${it.exists ? `<a href="#/${it.kind}s/${esc(it.id)}">${esc(it.name)}</a>` : esc(it.name)}</h3>
-              <span class="kind ${it.kind}">${it.kind === 'drill' ? 'Drill' : it.mode === 'hf' ? 'Stage · HF' : 'Stage'}</span>
+              <span class="kind ${it.kind}">${it.kind === 'drill' ? 'Drill' : 'Stage'}${it.mode === 'hf' ? ' · HF' : ''}</span>
             </div>
             ${trend(it)}
             <div class="mini-stats">

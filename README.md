@@ -9,7 +9,7 @@ A simple website for our church shooting group:
 - **Season standings**: points for placings on every drill and stage each range day, by month, year or all time, plus Most Improved.
 - **Range day plan**: the next range day's date, a note, the drills and stages in order, and the shooting order. It shows on the home page, and on the day the Record screen steps through it.
 - **Gun types**: tag each run (Pistol, PCC, Rifle and so on) and filter leaderboards by gun.
-- **Hit factor scoring** (optional, per stage): USPSA-style points ÷ time.
+- **Hit factor scoring** (optional, per drill or stage): USPSA-style points ÷ time.
 - **Personal goals**: each member can set a target per drill or stage and track progress toward it.
 - **Dry fire timer**: random-delay start beep and par beep for dry-fire practice. **Dry fire only. Use a real shot timer for live fire.**
 - **Export**: download every time as a spreadsheet (CSV), or a full backup.
@@ -109,7 +109,7 @@ One-time setup in Firebase (the admin account and a rule that only that account 
 ### Scoring, guns and goals
 
 - **Gun types:** pick the gun on the record form (each phone remembers the last one). Tap the **Gun** chips above a leaderboard to show just one gun type. Edit the list in **Settings → Gun types**.
-- **Hit factor:** in the stage editor set **Scoring** to **Hit factor**. When recording, enter the time and count A / C / D hits (count steel as A), misses, no-shoots and procedurals, and choose Minor or Major. Points: A 5, C 3 (4 major), D 1 (2 major), and −10 for each miss, no-shoot or procedural. Hit factor = points ÷ time; higher wins. Switching a stage's scoring later keeps old runs in its history, but only runs scored the current way are ranked.
+- **Hit factor:** in the drill or stage editor set **Scoring** to **Hit factor**. When recording, enter the time and count A / C / D hits (count steel as A), misses, no-shoots and procedurals, and choose Minor or Major. Points: A 5, C 3 (4 major), D 1 (2 major), and −10 for each miss, no-shoot or procedural. Hit factor = points ÷ time; higher wins. Switching a stage's scoring later keeps old runs in its history, but only runs scored the current way are ranked.
 - **Goals:** on a member's history page, tap **🎯 Set a goal** on any drill or stage. The card then shows how far there is to go and a progress bar, and the chart shows a goal line.
 - **Season standings:** home page → **🏆 Season standings** (also in the top menu on a computer). Each range day, every drill and stage gives 10 / 8 / 6 / 5 / 4 / 3 / 2 points for 1st–7th place and 1 point for everyone else who shot it. Most Improved averages each shooter's improvement from their first to last range day on everything they shot on at least two days in the period.
 
