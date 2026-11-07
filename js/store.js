@@ -86,6 +86,10 @@
   const COPY_KEY = 'rangelog-cloud-copy-v1';
   const FINAL_ERRORS = ['permission-denied', 'invalid-argument', 'failed-precondition', 'out-of-range'];
   let outbox = [];
+  // Changes the server refused (e.g. a rules problem). Never thrown away: they stay on this phone,
+  // keep showing in the app, and the site offers Try again / Download until they're resolved.
+  const FAILED_KEY = 'rangelog-failed-v1';
+  let failed = [];
   const inFlight = new Set();
   let copyTimer = null;
 
@@ -94,6 +98,7 @@
   }
   function saveOutbox() {
     try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch (e) { console.warn(e); }
+    try { localStorage.setItem(FAILED_KEY, JSON.stringify(failed)); } catch (e) { console.warn(e); }
     window.dispatchEvent(new CustomEvent('store-outbox'));
   }
   function queue(op) {
@@ -121,14 +126,20 @@
     write.then(() => { inFlight.delete(op.key); drop(); }, err => {
       inFlight.delete(op.key);
       if (op.type === 'removeRun' && err.code === 'not-found') drop(); // that day has no runs: nothing to remove
-      else if (FINAL_ERRORS.includes(err.code)) { drop(); writeFailed(err); }
+      else if (FINAL_ERRORS.includes(err.code)) {
+        // Refused by the server: keep it on the phone (never discard a recorded time).
+        outbox = outbox.filter(o => o.key !== op.key);
+        failed.push(Object.assign({}, op, { error: err.code, failedAt: Date.now() }));
+        saveOutbox();
+        writeFailed(err);
+      }
       else console.warn('Not sent yet; will try again next time the site opens.', err);
     });
   }
   // Runs still in the outbox show even if Firestore's own copy of them was lost.
   function overlayOutbox() {
     const removed = new Set(outbox.filter(o => o.type === 'removeRun').map(o => o.run.id));
-    outbox.forEach(o => {
+    outbox.concat(failed).forEach(o => {
       if (o.type !== 'addRun' || removed.has(o.run.id) || rawRuns.has(o.run.id)) return;
       rawRuns.set(o.run.id, { date: o.date, raw: o.run });
       cache.times.push(Object.assign({}, o.run, { date: o.date }));
@@ -192,6 +203,7 @@
   /* ---------- cloud mode ---------- */
   async function initCloud() {
     outbox = (loadJSON(OUTBOX_KEY) || []).filter(o => o && o.key && o.type);
+    failed = (loadJSON(FAILED_KEY) || []).filter(o => o && o.key && o.type);
     const hadCopy = loadCopy();
     overlayOutbox();
 
@@ -304,6 +316,19 @@
     },
     // Changes made here that the server hasn't confirmed yet (cloud mode).
     pendingCount() { return outbox.length; },
+    // Has the server confirmed this run yet? (cloud mode; local/demo mode never syncs)
+    isPending(runId) { return outbox.some(o => o.type === 'addRun' && o.run.id === runId); },
+    isFailed(runId) { return failed.some(o => o.type === 'addRun' && o.run.id === runId); },
+    failedCount() { return failed.length; },
+    failedRuns() { return failed.filter(o => o.type === 'addRun').map(o => Object.assign({}, o.run, { date: o.date })); },
+    // Send refused changes again (e.g. after the database rules were fixed).
+    retryFailed() {
+      const again = failed.map(o => { const op = Object.assign({}, o); delete op.error; delete op.failedAt; return op; });
+      failed = [];
+      outbox = outbox.concat(again);
+      saveOutbox();
+      again.forEach(send);
+    },
     get(c, id) { return cache[c].find(x => x.id === id) || null; },
     onChange(fn) { listeners.push(fn); },
 

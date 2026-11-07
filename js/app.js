@@ -115,6 +115,23 @@
   }
   // Small gun label under a name when the leaderboard mixes gun types.
   function divNote(r) { return divFilter === 'all' && r.division ? `<span class="sub">${esc(r.division)}</span>` : ''; }
+  // Has this time reached the group's database? (Only meaningful when synced with Firebase.)
+  function syncBadge(runId) {
+    if (Store.mode !== 'cloud') return '';
+    if (Store.isFailed(runId)) return '<span class="sync bad">⚠ not saved</span>';
+    if (Store.isPending(runId)) return '<span class="sync wait">⏳ waiting for signal</span>';
+    return '<span class="sync ok">✓ saved</span>';
+  }
+  function downloadFile(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   function svgPoint(svg, e) {
     const pt = svg.createSVGPoint();
     pt.x = e.clientX; pt.y = e.clientY;
@@ -1425,7 +1442,7 @@
         ${latest.length ? `
           <h4 class="mini-title">Latest entries</h4>
           <ul class="entry-list">${latest.map(r => `<li>
-            <span class="who">${esc(r.shooter)}</span>
+            <span class="who">${esc(r.shooter)}${syncBadge(r.id)}</span>
             <span class="t">${timeCell(r)}</span>
             <button class="icon-btn" data-del-time="${esc(r.id)}" title="Delete this run" aria-label="Delete ${esc(r.shooter)}'s run">×</button>
           </li>`).join('')}</ul>`
@@ -2041,16 +2058,7 @@
     drawGuns();
 
     // ---- export ----
-    function download(name, text, type) {
-      const url = URL.createObjectURL(new Blob([text], { type }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
+    const download = downloadFile;
     $('#export-csv').addEventListener('click', () => {
       const cell = v => {
         const t = v == null ? '' : String(v);
@@ -3013,7 +3021,39 @@
     router();
   }
 
+  // Banner above every page for things that must not be missed: demo mode (nothing is saved
+  // to the group) and times the server refused (kept on this phone until resolved).
+  function renderTopBanner() {
+    const el = $('#top-banner');
+    if (!el) return;
+    let html = '';
+    if (Store.mode === 'local') {
+      const real = location.pathname + location.hash.replace(/^$/, '#/');
+      html = `<div class="top-alert">
+        <span>⚠️ <b>DEMO MODE.</b> Times entered here stay on this device only and are <b>not saved to the group</b>.</span>
+        ${/[?&]demo\b/.test(location.search) ? `<a class="btn sm" href="${esc(real)}">Open the real site</a>` : ''}
+      </div>`;
+    } else if (Store.failedCount()) {
+      const n = Store.failedCount();
+      html = `<div class="top-alert">
+        <span>⚠️ <b>${n} change${n === 1 ? '' : 's'} could not be saved to the group.</b> ${n === 1 ? "It's" : "They're"} still on this phone. Don't clear this browser's data.</span>
+        <span class="top-alert-btns"><button class="btn sm" type="button" id="retry-failed">Try again</button><button class="btn sm" type="button" id="download-failed">Download them</button></span>
+      </div>`;
+    }
+    el.innerHTML = html;
+    el.hidden = !html;
+    const retry = $('#retry-failed');
+    if (retry) retry.addEventListener('click', () => { Store.retryFailed(); toast('Trying again…'); });
+    const dl = $('#download-failed');
+    if (dl) dl.addEventListener('click', () => {
+      const cell = v => { const t = v == null ? '' : String(v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+      const rows = Store.failedRuns().map(r => [r.date, r.shooter, r.division || '', r.itemName, isHF(r) ? 'HF ' + fmtHF(r.hf) : fmtTime(r.time), r.notes || ''].map(cell).join(','));
+      downloadFile(`unsaved-times-${today()}.csv`, '\ufeff' + ['Date,Shooter,Gun,Drill / stage,Score,Notes'].concat(rows).join('\r\n'), 'text/csv;charset=utf-8');
+    });
+  }
+
   function renderFooter() {
+    renderTopBanner();
     const footer = $('#footer');
     if (Store.mode === 'local') {
       footer.innerHTML = `<div class="mode-banner"><span>💾 <b>Demo mode</b> — data is saved only in this browser. Connect Firebase (see README) so the whole group shares the same data.</span>
@@ -3032,7 +3072,12 @@
 
   window.addEventListener('beforeunload', e => { if (editorDirty) { e.preventDefault(); e.returnValue = ''; } });
   window.addEventListener('store-error', e => toast('Could not save: ' + e.detail));
-  window.addEventListener('store-outbox', () => { if ($('#footer')) renderFooter(); });
+  // Outbox changes (a time was confirmed by the server, or is waiting): update the status lines
+  // and the ✓ / ⏳ marks on the current page.
+  window.addEventListener('store-outbox', () => {
+    if ($('#footer')) renderFooter();
+    if (pageRefresh && !editorDirty) pageRefresh();
+  });
 
   app.addEventListener('click', e => {
     const btn = e.target.closest('[data-del-time]');
